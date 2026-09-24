@@ -66,6 +66,59 @@ jobs:
       - name: pytest
         run: uv run pytest
 
+  satellite:
+    name: Satellite (ruff, pyright, pytest)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: satellite
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.17"
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: satellite/uv.lock
+      - run: uv sync
+      - name: ruff
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: pyright
+        run: uv run pyright
+      - name: pytest
+        run: uv run pytest
+
+  satellite-windows:
+    name: Satellite on Windows (real wake-word model, installer)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: satellite
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.17"
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: satellite/uv.lock
+      - run: uv sync
+      - name: pytest (including the real openWakeWord model)
+        run: uv run pytest -v
+      - name: The installer's pinned versions export
+        run: uv export --frozen --no-dev --no-emit-project --no-hashes --quiet --output-file "$env:RUNNER_TEMP\constraints.txt"
+      - name: Wake-word benchmark on a synthetic room
+        run: |
+          uv run jarvis-satellite fetch-models
+          uv run python bench/synthetic_room.py "$env:RUNNER_TEMP\room.wav"
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\positives" | Out-Null
+          Copy-Item tests/fixtures/hey_jarvis.wav "$env:RUNNER_TEMP\positives\"
+          uv run python bench/false_accepts.py "$env:RUNNER_TEMP\room.wav" --threshold 0.5 --sweep --positives "$env:RUNNER_TEMP\positives"
+
   web:
     name: Web (eslint, prettier, tsc, vitest, build)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
@@ -213,7 +266,7 @@ jobs:
           "$RUNNER_TEMP/gitleaks" git . --redact --verbose --no-banner
 
   windows:
-    name: Windows setup script
+    name: Windows scripts
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest
     timeout-minutes: 10
@@ -243,3 +296,9 @@ jobs:
       - name: Helper tests (PowerShell 7)
         shell: pwsh
         run: ./scripts/windows/setup.tests.ps1
+      - name: Satellite installer helper tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\scripts\windows\install-satellite.tests.ps1
+      - name: Satellite installer helper tests (PowerShell 7)
+        shell: pwsh
+        run: ./scripts/windows/install-satellite.tests.ps1

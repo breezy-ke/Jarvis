@@ -126,8 +126,10 @@ restore: ## Restore a backup: make restore FILE=data/backups/jarvis-....dump (re
 ## Development (needs uv, pnpm and Docker)
 
 .PHONY: install
-install: ## Install the Python and web dependencies
+install: ## Install the Python and web dependencies (and the voice pipeline's sentence data)
 	cd core && uv sync --all-extras
+	cd core && uv run jarvis fetch-text-data --dest ../data/nltk_data
+	cd satellite && uv sync
 	cd web && pnpm install --frozen-lockfile
 
 .PHONY: dev-db
@@ -149,21 +151,25 @@ dev-web: ## Run the web app with hot reload on http://localhost:5173 (proxies /a
 .PHONY: fmt
 fmt: ## Format and auto-fix the code
 	cd core && uv run ruff check --fix . && uv run ruff format .
+	cd satellite && uv run ruff check --fix . && uv run ruff format .
 	cd web && pnpm exec prettier --write .
 
 .PHONY: lint
 lint: ## Lint everything
 	cd core && uv run ruff check . && uv run ruff format --check .
+	cd satellite && uv run ruff check . && uv run ruff format --check .
 	cd web && pnpm lint && pnpm format:check
 
 .PHONY: typecheck
 typecheck: ## Type-check everything
 	cd core && uv run pyright
+	cd satellite && uv run pyright
 	cd web && pnpm typecheck
 
 .PHONY: test
 test: ## Run the unit and integration tests (needs make dev-db)
 	cd core && uv run pytest
+	cd satellite && uv run pytest
 	cd web && pnpm test
 
 .PHONY: e2e
