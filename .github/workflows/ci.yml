@@ -52,6 +52,13 @@ jobs:
           enable-cache: true
           cache-dependency-glob: core/uv.lock
       - run: uv sync --all-extras
+      - name: Sentence data for the voice pipeline (checksum-pinned)
+        run: |
+          for attempt in 1 2 3; do
+            uv run jarvis fetch-text-data --dest ../data/nltk_data && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
       - name: ruff
         run: uv run ruff check . && uv run ruff format --check .
       - name: pyright
@@ -113,6 +120,14 @@ jobs:
           cache-dependency-glob: core/uv.lock
       - run: uv sync
         working-directory: core
+      - name: Sentence data for the voice pipeline (checksum-pinned)
+        working-directory: core
+        run: |
+          for attempt in 1 2 3; do
+            uv run jarvis fetch-text-data --dest ../data/nltk_data && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json

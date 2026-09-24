@@ -15,6 +15,8 @@ from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
 from jarvis.onboarding.service import OnboardingService
 from jarvis.services import Services
+from jarvis.telegram.bot import TelegramBot
+from jarvis.voice.runtime import VoiceRuntime
 
 
 @dataclass
@@ -26,6 +28,8 @@ class AppState:
     ingestion: IngestionService
     google: GoogleAuth
     http: httpx.AsyncClient
+    voice: VoiceRuntime
+    telegram: TelegramBot | None = None
 
 
 def get_state(request: Request) -> AppState:

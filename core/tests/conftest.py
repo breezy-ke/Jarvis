@@ -10,6 +10,10 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+# Sentence-splitting data for the voice pipeline (`make install` fetches it).
+os.environ.setdefault(
+    "NLTK_DATA", os.path.join(os.path.dirname(__file__), "..", "..", "data", "nltk_data")
+)
 os.environ["JARVIS_ENV"] = "test"
 # Tests must never reach a real service with a real credential.
 for _var in (
@@ -27,6 +31,9 @@ for _var in (
     "DATABASE_URL",
     "PHOENIX_COLLECTOR_ENDPOINT",
     "OLLAMA_BASE_URL",
+    "TELEGRAM_BOT_TOKEN",
+    "SPEECH_API_KEY",
+    "SPEECH_BASE_URL",
 ):
     os.environ.pop(_var, None)
 

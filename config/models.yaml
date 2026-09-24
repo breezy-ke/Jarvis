@@ -74,6 +74,13 @@ models:
   local-chat:
     provider: ollama
     model: qwen3:8b
+  # The same model for voice, with its "thinking" pause switched off and short
+  # answers, so replies start speaking within a second or so.
+  local-voice:
+    provider: ollama
+    model: qwen3:8b
+    reasoning: none
+    max_tokens: 400
   # --- Groq free tier (private-safe, very fast). Limits are the free-tier
   #     values; the router stops using a model before it hits them.
   groq-large:
@@ -105,7 +112,7 @@ tasks:
     candidates: [local-chat, groq-large]
   voice:
     privacy: personal
-    candidates: [local-chat, groq-fast]
+    candidates: [local-voice, groq-fast]
   onboarding:
     privacy: personal
     candidates: [groq-large, local-chat]

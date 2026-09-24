@@ -175,9 +175,11 @@ class ProfileService:
         return address.strip().lower() in known
 
 
-def core_summary(profile: Profile, *, max_chars: int = 3_500) -> str:
+def core_summary(profile: Profile, *, max_chars: int = 3_500, exclude: tuple[str, ...] = ()) -> str:
     """A compact profile summary for every system prompt. Empty fields are omitted."""
     data = profile.model_dump(mode="json", exclude_defaults=True)
+    for section in exclude:
+        data.pop(section, None)
     lines: list[str] = []
 
     def render(value: Any) -> str:

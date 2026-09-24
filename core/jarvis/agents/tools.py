@@ -15,6 +15,7 @@ class AgentDeps:
     services: Services
     actor: str
     conversation_id: uuid.UUID | None = None
+    redact_sensitive: bool = False  # on channels that aren't end-to-end encrypted
 
 
 async def audit_tool(

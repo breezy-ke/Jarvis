@@ -71,6 +71,28 @@ def scan_text(text: str, *, path: str = "$") -> list[Finding]:
     return findings
 
 
+def redact_text(text: str, *, placeholder: str = "[hidden]") -> tuple[str, int]:
+    """Replace secrets, card numbers and KRA PINs in `text`. Returns (text, how many)."""
+    count = 0
+
+    def hide(match: re.Match[str]) -> str:
+        nonlocal count
+        count += 1
+        return placeholder
+
+    def hide_card(match: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+            return hide(match)
+        return match.group(0)
+
+    for _, pattern in _SECRET_PATTERNS:
+        text = pattern.sub(hide, text)
+    text = _CARD_RE.sub(hide_card, text)
+    text = _KRA_PIN_RE.sub(hide, text)
+    return text, count
+
+
 def iter_strings(value: Any, path: str = "$") -> Iterator[tuple[str, str]]:
     """Yield (path, text) for every string inside a JSON-like value."""
     if isinstance(value, str):

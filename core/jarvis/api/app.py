@@ -8,6 +8,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -17,6 +18,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
 from jarvis.api import actions, auth, chat, onboarding, profile, system
+from jarvis.api import telegram as telegram_api
+from jarvis.api import voice as voice_api
 from jarvis.api.deps import AppState
 from jarvis.auth.service import AuthService
 from jarvis.chat.service import ChatService
@@ -27,18 +30,31 @@ from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
 from jarvis.onboarding.service import OnboardingService
 from jarvis.services import Services, build_services
+from jarvis.telegram.bot import build_telegram_bot
 from jarvis.tracing import configure_tracing
+from jarvis.voice.runtime import build_voice_runtime
 from jarvis.workflows.scheduler import Scheduler, executor_loop
 
 log = logging.getLogger("jarvis")
 
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; "
-    "connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; "
-    "base-uri 'self'; form-action 'self'"
-)
+# Called by non-browser clients and authorised by a one-time code, never a
+# cookie, so cross-site request forgery doesn't apply.
+_NO_COOKIE_ENDPOINTS = frozenset({"/api/voice/devices/pair"})
+
+
+def content_security_policy(public_origin: str) -> str:
+    """The page's CSP. Jarvis's own WebSocket address is named explicitly for the
+    voice socket, because older Safari doesn't count ws:/wss: as 'self'."""
+    parts = urlsplit(public_origin)
+    socket = f"{'wss' if parts.scheme == 'https' else 'ws'}://{parts.netloc}"
+    return (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; "
+        f"connect-src 'self' {socket}; worker-src 'self'; manifest-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+
 
 ServicesFactory = Callable[[Settings, SessionFactory], Services]
 
@@ -102,14 +118,19 @@ def create_app(
             http=http,
         )
         auth_service = AuthService(settings=settings, audit=services.audit, clock=services.clock)
+        voice = build_voice_runtime(settings, services)
+        chat_service = ChatService(services)
+        telegram = build_telegram_bot(settings, services, chat=chat_service, voice=voice)
         app.state.jarvis = AppState(
             services=services,
             auth=auth_service,
-            chat=ChatService(services),
+            chat=chat_service,
             onboarding=OnboardingService(services),
             ingestion=IngestionService(services, http=http, google_auth=google),
             google=google,
             http=http,
+            voice=voice,
+            telegram=telegram,
         )
 
         async with transaction(session_factory) as session:
@@ -122,8 +143,11 @@ def create_app(
         stop = asyncio.Event()
         background: list[asyncio.Task[None]] = []
         scheduler = Scheduler(services)
+        preparing = asyncio.create_task(voice.prepare())
         if run_background:
             background.append(asyncio.create_task(executor_loop(services, stop)))
+            if telegram is not None:
+                background.append(asyncio.create_task(telegram.run(stop)))
             if settings.enable_scheduler:
                 try:
                     await scheduler.start()
@@ -133,10 +157,14 @@ def create_app(
             yield
         finally:
             stop.set()
-            for task in background:
+            preparing.cancel()  # a slow download mustn't hold up shutdown
+            for task in [preparing, *background]:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             await scheduler.stop()
+            if telegram is not None:
+                await telegram.aclose()
+            await voice.aclose()
             await http.aclose()
             await engine.dispose()
 
@@ -149,11 +177,17 @@ def create_app(
         openapi_url=None if settings.is_production else "/api/openapi.json",
     )
 
+    csp = content_security_policy(settings.public_origin)
+
     @app.middleware("http")
     async def security(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.method in _UNSAFE_METHODS and request.url.path.startswith("/api/"):
+        if (
+            request.method in _UNSAFE_METHODS
+            and request.url.path.startswith("/api/")
+            and request.url.path not in _NO_COOKIE_ENDPOINTS
+        ):
             origin = request.headers.get("origin")
             fetch_site = request.headers.get("sec-fetch-site")
             same_origin = origin == settings.public_origin or (
@@ -162,7 +196,7 @@ def create_app(
             if not same_origin:
                 return JSONResponse({"detail": "Cross-site request blocked."}, status_code=403)
         response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", _CSP)
+        response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -176,7 +210,7 @@ def create_app(
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
-    for module in (auth, chat, actions, system, profile, onboarding):
+    for module in (auth, chat, actions, system, profile, onboarding, voice_api, telegram_api):
         app.include_router(module.router)
 
     dist = settings.web_dist_dir

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=_default_data_dir, alias="JARVIS_DATA_DIR")
     web_dist_dir: Path | None = Field(default=None, alias="JARVIS_WEB_DIST")
     models_file: Path | None = Field(default=None, alias="JARVIS_MODELS_FILE")
+    voice_file: Path | None = Field(default=None, alias="JARVIS_VOICE_FILE")
     allow_fake_llm: bool = Field(default=False, alias="JARVIS_ALLOW_FAKE_LLM")
     enable_scheduler: bool = Field(default=True, alias="JARVIS_ENABLE_SCHEDULER")
     auto_migrate: bool = Field(default=True, alias="JARVIS_AUTO_MIGRATE")
@@ -63,6 +64,12 @@ class Settings(BaseSettings):
 
     phoenix_endpoint: str | None = Field(default=None, alias="PHOENIX_COLLECTOR_ENDPOINT")
 
+    # Local speech server (speaches: faster-whisper + Kokoro), OpenAI-compatible.
+    speech_base_url: str = Field(default="http://speech:8000/v1", alias="SPEECH_BASE_URL")
+    speech_api_key: SecretStr | None = Field(default=None, alias="SPEECH_API_KEY")
+
+    telegram_bot_token: SecretStr | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
+
     @field_validator("public_origin")
     @classmethod
     def _strip_origin(cls, value: str) -> str:
@@ -70,6 +77,14 @@ class Settings(BaseSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("JARVIS_PUBLIC_ORIGIN must look like https://host[:port]")
         return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
+    def voice_config_path(self) -> Path:
+        return self.voice_file or self.config_dir / "voice.yaml"
+
+    @property
+    def models_config_path(self) -> Path:
+        return self.models_file or self.config_dir / "models.yaml"
 
     @property
     def rp_id(self) -> str:

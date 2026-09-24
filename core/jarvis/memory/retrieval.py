@@ -21,6 +21,7 @@ from jarvis.memory.store import ACTIVE_STATUSES, FactStatus
 
 _RRF_K = 60
 _POOL = 40
+SENSITIVE = "sensitive"  # Fact.sensitivity for health, money, family and credential details
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ async def search_facts(
     limit: int = 8,
     include_inferred: bool = True,
     categories: tuple[str, ...] | None = None,
+    exclude_sensitive: bool = False,
 ) -> list[ScoredFact]:
     query = query.strip()
     if not query:
@@ -61,6 +63,8 @@ async def search_facts(
     base = select(Fact).where(Fact.valid_to.is_(None)).where(Fact.status.in_(statuses))
     if categories:
         base = base.where(Fact.category.in_(categories))
+    if exclude_sensitive:
+        base = base.where(Fact.sensitivity != SENSITIVE)
 
     by_vector = list(
         await session.scalars(

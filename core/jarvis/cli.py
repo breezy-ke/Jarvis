@@ -1,4 +1,4 @@
-"""Command line: `jarvis serve | migrate | setup-token | secrets | doctor | local-models`."""
+"""Command line: `jarvis serve | migrate | setup-token | secrets | doctor | ...` (see --help)."""
 
 from __future__ import annotations
 
@@ -146,6 +146,17 @@ def _local_models(_: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_text_data(args: argparse.Namespace) -> int:
+    from jarvis.voice.textdata import fetch_punkt
+
+    dest = Path(args.dest)
+    if fetch_punkt(dest):
+        print(f"Installed sentence-splitting data in {dest}.")
+    else:
+        print(f"Sentence-splitting data is already in {dest}.")
+    return 0
+
+
 def _doctor(args: argparse.Namespace) -> int:
     from jarvis.doctor import run_doctor
 
@@ -171,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "local-models", help="list the Ollama models config/models.yaml uses"
     ).set_defaults(func=_local_models)
+    p_text = sub.add_parser(
+        "fetch-text-data", help="download the voice pipeline's sentence-splitting data"
+    )
+    p_text.add_argument("--dest", default=os.environ.get("NLTK_DATA", "nltk_data"))
+    p_text.set_defaults(func=_fetch_text_data)
     args = parser.parse_args(argv)
     return int(args.func(args))
 
