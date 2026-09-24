@@ -27,6 +27,7 @@ from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
 from jarvis.onboarding.service import OnboardingService
 from jarvis.services import Services, build_services
+from jarvis.tracing import configure_tracing
 from jarvis.workflows.scheduler import Scheduler, executor_loop
 
 log = logging.getLogger("jarvis")
@@ -82,6 +83,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        configure_tracing(settings)
         engine = create_engine(settings.database_url)
         if settings.auto_migrate:
             await run_migrations(engine)

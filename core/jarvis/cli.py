@@ -1,4 +1,4 @@
-"""Command-line entry point: `jarvis serve | migrate | setup-token | secrets | doctor`."""
+"""Command line: `jarvis serve | migrate | setup-token | secrets | doctor | local-models`."""
 
 from __future__ import annotations
 
@@ -87,6 +87,7 @@ def generate_secrets() -> dict[str, str]:
         "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
         "VAPID_PRIVATE_KEY": _b64url(private_raw),
         "VAPID_PUBLIC_KEY": _b64url(public_raw),
+        "SEARXNG_SECRET": secrets.token_hex(32),
     }
 
 
@@ -124,6 +125,27 @@ def _secrets(args: argparse.Namespace) -> int:
     return 0
 
 
+def local_model_ids(models_file: Path) -> list[str]:
+    """Model IDs that run on the local Ollama server, in config order, without duplicates."""
+    from jarvis.llm.config import load_models_config
+
+    config = load_models_config(models_file)
+    ids: list[str] = []
+    for model in config.models.values():
+        if config.providers[model.provider].kind == "ollama" and model.model not in ids:
+            ids.append(model.model)
+    return ids
+
+
+def _local_models(_: argparse.Namespace) -> int:
+    from jarvis.config import get_settings
+
+    settings = get_settings()
+    for model_id in local_model_ids(settings.models_file or settings.config_dir / "models.yaml"):
+        print(model_id)
+    return 0
+
+
 def _doctor(args: argparse.Namespace) -> int:
     from jarvis.doctor import run_doctor
 
@@ -146,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
         "--online", action="store_true", help="also test API keys over the network"
     )
     p_doctor.set_defaults(func=_doctor)
+    sub.add_parser(
+        "local-models", help="list the Ollama models config/models.yaml uses"
+    ).set_defaults(func=_local_models)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

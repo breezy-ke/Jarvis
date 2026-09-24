@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -41,6 +42,14 @@ def local_model_for_vram(vram_gb: float) -> str:
 
 
 def gpu_vram_gb() -> float | None:
+    # The core container can't see the GPU (only Ollama gets it), so `make doctor`
+    # measures VRAM on the host and passes it in.
+    override = os.environ.get("JARVIS_GPU_VRAM_GB", "").strip()
+    if override:
+        try:
+            return float(override) if float(override) > 0 else None
+        except ValueError:
+            pass
     if shutil.which("nvidia-smi") is None:
         return None
     try:
@@ -113,7 +122,7 @@ def check_configs(settings: Settings) -> tuple[list[Check], ModelsConfig | None]
             Check(FAIL, "policies.yaml", str(exc), "Fix the file; Jarvis refuses to start with it.")
         )
     try:
-        models = load_models_config(settings.config_dir / "models.yaml")
+        models = load_models_config(settings.models_file or settings.config_dir / "models.yaml")
         checks.append(
             Check(OK, "models.yaml", f"{len(models.models)} models, {len(models.tasks)} tasks")
         )
@@ -121,6 +130,28 @@ def check_configs(settings: Settings) -> tuple[list[Check], ModelsConfig | None]
     except ValueError as exc:
         checks.append(Check(FAIL, "models.yaml", str(exc), "Fix the file."))
         return checks, None
+
+
+def _task_fix(models: ModelsConfig, candidates: tuple[str, ...], privacy: PrivacyClass) -> str:
+    """How to give a task a usable model, from the candidates it may use."""
+    fixes: list[str] = []
+    for ref in candidates:
+        provider = models.providers[models.models[ref].provider]
+        if not allowed(provider, privacy) or provider.paid:
+            continue
+        if provider.local:
+            fix = "start Ollama (`make up`, then `make pull-models`)"
+        elif provider.api_key_env:
+            fix = f"add {provider.api_key_env} to .env"
+        else:
+            continue
+        if fix not in fixes:
+            fixes.append(fix)
+    if not fixes:
+        return "Add an allowed model for this task in config/models.yaml."
+    if len(fixes) == 1:
+        return fixes[0][0].upper() + fixes[0][1:] + "."
+    return "Either " + ", or ".join(fixes) + "."
 
 
 def check_privacy(models: ModelsConfig, env: Mapping[str, str]) -> list[Check]:
@@ -145,7 +176,7 @@ def check_privacy(models: ModelsConfig, env: Mapping[str, str]) -> list[Check]:
                     WARN,
                     f"Task '{name}' ({task.privacy.value})",
                     "no usable model yet",
-                    "Start Ollama with the local model, or add GROQ_API_KEY to .env.",
+                    _task_fix(models, task.candidates, task.privacy),
                 )
             )
     if (
@@ -226,11 +257,7 @@ async def check_ollama(
         resp = await client.get(f"{base}/api/tags", timeout=5)
         pulled = {m["name"] for m in resp.json().get("models", [])}
     except (httpx.HTTPError, ValueError):
-        checks.append(
-            Check(
-                WARN, "Ollama", f"not reachable at {base}", "Start it with `make up` (GPU profile)."
-            )
-        )
+        checks.append(Check(WARN, "Ollama", f"not reachable at {base}", "Start it with `make up`."))
         return checks
     wanted = [
         m.model

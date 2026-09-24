@@ -25,6 +25,8 @@ for _var in (
     "VAPID_PRIVATE_KEY",
     "JARVIS_SECRET_KEY",
     "DATABASE_URL",
+    "PHOENIX_COLLECTOR_ENDPOINT",
+    "OLLAMA_BASE_URL",
 ):
     os.environ.pop(_var, None)
 
