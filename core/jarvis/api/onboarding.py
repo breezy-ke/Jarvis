@@ -28,7 +28,11 @@ async def overview(owner: Owner, state: State) -> dict[str, Any]:
     return {
         **(await state.onboarding.overview()),
         "modules": [
-            {**asdict(s), "opening": MODULES_BY_ID[s.id].opening, "goal": MODULES_BY_ID[s.id].goal}
+            {
+                **asdict(s),
+                "opening": MODULES_BY_ID[s.id].opening,
+                "goal": MODULES_BY_ID[s.id].blurb or MODULES_BY_ID[s.id].goal,
+            }
             for s in statuses
         ],
     }

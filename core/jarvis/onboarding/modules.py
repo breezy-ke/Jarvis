@@ -15,6 +15,7 @@ class OnboardingModule:
     fields: tuple[str, ...]
     opening: str
     guidance: str
+    blurb: str = ""
     optional: bool = False
 
     @property
@@ -26,6 +27,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="identity",
         title="About you (and me)",
+        blurb="How I should address you, where you are, and how I should come across.",
         goal="How to address the owner, where they are, and how Jarvis itself should come across.",
         fields=(
             "identity.preferred_name",
@@ -50,6 +52,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="business",
         title="Your business",
+        blurb="Your consultancy: what you sell, why clients choose you, and your rates.",
         goal="The consultancy: name, what it sells, why clients choose it, and the rate card.",
         fields=(
             "business.name",
@@ -69,6 +72,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="clients",
         title="Ideal clients",
+        blurb="Who to hunt for in each lead play, and who never to approach.",
         goal="Who to hunt for in each lead play, and who never to approach.",
         fields=("clients.ideal_clients", "clients.current_clients", "clients.never_pitch"),
         opening=(
@@ -85,6 +89,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="portfolio",
         title="Portfolio & case studies",
+        blurb="Work I can cite in proposals and outreach.",
         goal="Work Jarvis can cite in proposals and outreach.",
         fields=("portfolio.portfolio_url", "portfolio.highlights"),
         opening="Which projects are you proudest of? A link to your portfolio is a great start.",
@@ -95,6 +100,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="engineering",
         title="Stacks & conventions",
+        blurb="How you build software, so my code matches your house style.",
         goal="How the owner builds software, so Jarvis's code matches their house style.",
         fields=(
             "engineering.primary_stacks",
@@ -113,6 +119,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="design",
         title="Design taste",
+        blurb="The aesthetic direction for everything I design.",
         goal="Aesthetic direction for everything Jarvis designs.",
         fields=(
             "design.style_keywords",
@@ -134,6 +141,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="communication",
         title="Writing tone",
+        blurb="How you write, so my drafts sound like you.",
         goal="How the owner writes, so drafts sound like them.",
         fields=(
             "communication.tone",
@@ -154,6 +162,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="schedule",
         title="Schedule & routines",
+        blurb="When you work, focus, and must not be disturbed.",
         goal="When the owner works, focuses and must not be disturbed.",
         fields=(
             "schedule.working_hours",
@@ -171,6 +180,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="goals",
         title="Goals",
+        blurb="What success looks like this quarter and this year.",
         goal="What success looks like this quarter and this year.",
         fields=(
             "goals.business_goals",
@@ -187,6 +197,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="people",
         title="VIPs & contacts",
+        blurb="The people who matter, so I prioritise them and recognise their emails.",
         goal="The people who matter, so Jarvis prioritises them and recognises their emails.",
         fields=("people.contacts",),
         opening=(
@@ -200,6 +211,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="boundaries",
         title="Boundaries & autonomy",
+        blurb="What I must never do, must always ask about, and may do on my own.",
         goal="What Jarvis must never do, must always ask about, and may do on its own.",
         fields=(
             "boundaries.never_do",
@@ -218,6 +230,7 @@ MODULES: tuple[OnboardingModule, ...] = (
     OnboardingModule(
         id="personal",
         title="Personal (optional)",
+        blurb="Anything personal you'd like me to keep in mind. Entirely optional.",
         goal="Anything personal the owner wants Jarvis to keep in mind.",
         fields=("personal.notes", "personal.important_dates"),
         opening=(
