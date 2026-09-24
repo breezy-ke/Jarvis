@@ -16,6 +16,8 @@ import type { ModelsOverview, Passkey, PoliciesOverview } from "@/lib/types";
 import { timeAgo } from "@/lib/utils";
 import { confirmWithPasskey, guessDeviceName, registerPasskey } from "@/lib/webauthn";
 
+import { TelegramCard, VoiceCard } from "./SettingsVoice";
+
 export function SettingsPage() {
   return (
     <div className="space-y-4">
@@ -23,6 +25,8 @@ export function SettingsPage() {
       <SafetyCard />
       <PasskeysCard />
       <NotificationsCard />
+      <VoiceCard />
+      <TelegramCard />
       <ModelsCard />
       <PoliciesCard />
       <AppearanceCard />

@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import { baseURL, serverEnv } from "./e2e/env";
+import { baseURL, fakeMicrophone, serverEnv } from "./e2e/env";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -12,9 +12,17 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
-    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
-      : {},
+    launchOptions: {
+      // A fake microphone that says one sentence, then stays quiet.
+      args: [
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+        `--use-file-for-fake-audio-capture=${fakeMicrophone}%noloop`,
+      ],
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+        : {}),
+    },
   },
   // One serial journey against one server; phone widths are covered inside it.
   projects: [{ name: "desktop", use: { ...devices["Desktop Chrome"] } }],

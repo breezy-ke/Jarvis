@@ -133,6 +133,39 @@
   animation: breathe 1.6s ease-in-out infinite;
 }
 
+/* Voice: the orb follows the sound (--level, 0-1, set by the Talk page). */
+.orb-voice {
+  --level: 0;
+  transition:
+    transform 90ms linear,
+    box-shadow 90ms linear,
+    opacity 250ms ease;
+}
+.orb-off {
+  opacity: 0.45;
+  filter: saturate(0.6);
+}
+.orb-connecting {
+  animation: breathe 1s ease-in-out infinite;
+  opacity: 0.7;
+}
+.orb-listening {
+  transform: scale(calc(1 + var(--level) * 0.3));
+  box-shadow:
+    0 0 calc(40px + var(--level) * 60px) var(--glow),
+    0 0 0 3px color-mix(in oklch, var(--primary) 45%, transparent);
+}
+.orb-speaking {
+  transform: scale(calc(1 + var(--level) * 0.35));
+  box-shadow: 0 0 calc(50px + var(--level) * 90px) var(--glow);
+}
+@media (prefers-reduced-motion: reduce) {
+  .orb-listening,
+  .orb-speaking {
+    transform: none;
+  }
+}
+
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
 }
