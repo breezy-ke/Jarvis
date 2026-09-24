@@ -1,0 +1,132 @@
+# Jarvis model router
+# ---------------------------------------------------------------------------
+# Every AI call names a *task*. The task decides:
+#   * its data class (public / personal / confidential)
+#   * an ordered list of model candidates
+# The router tries candidates in order and skips any that:
+#   * may not see this data class (see the provider flags below). The router
+#     fails closed: if no allowed candidate is left, the call errors.
+#   * are missing an API key,
+#   * are near their free-tier quota,
+#   * belong to a paid provider when the monthly budget is 0.
+#
+# Model IDs change often. `make doctor` checks the ones below against each
+# provider's live model list and suggests replacements. Changing a model is a
+# config edit, not a code change.
+version: 1
+
+budget:
+  # Hard monthly cap (USD) for providers marked `paid: true`. 0 disables them.
+  monthly_usd_cap: 0
+  alert_thresholds: [0.5, 0.8, 1.0]
+
+# Quota headroom: skip a model once usage reaches this share of any limit, so
+# requests are not rejected halfway through a conversation.
+quota_headroom: 0.9
+
+providers:
+  ollama:
+    kind: ollama
+    base_url_env: OLLAMA_BASE_URL          # default http://ollama:11434/v1
+    local: true
+    trains_on_data: false
+    zero_data_retention: true
+  groq:
+    kind: groq
+    api_key_env: GROQ_API_KEY
+    # Groq Services Agreement s.4.2: no training on inputs/outputs (free tier
+    # included). Only set zero_data_retention to true after you switch on
+    # Zero Data Retention in the Groq console (Settings -> Data Controls).
+    # `make doctor` reminds you.
+    trains_on_data: false
+    zero_data_retention: true
+  gemini:
+    kind: google
+    api_key_env: GEMINI_API_KEY
+    # Unpaid Gemini API: Google may use prompts/responses to improve products,
+    # and human reviewers may read them. Public data only.
+    trains_on_data: true
+    zero_data_retention: false
+  openrouter:
+    kind: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    # Free OpenRouter endpoints may log prompts for training. Public data only.
+    trains_on_data: true
+    zero_data_retention: false
+  anthropic:
+    kind: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    paid: true
+    trains_on_data: false
+    zero_data_retention: false
+  openai:
+    kind: openai
+    api_key_env: OPENAI_API_KEY
+    paid: true
+    trains_on_data: false
+    zero_data_retention: false
+
+models:
+  # --- Local, on your GPU (private, no rate limits). `make doctor` picks the
+  #     size that fits your VRAM next to the voice models:
+  #     under 10 GB -> qwen3:4b, 10-15 GB -> qwen3:8b, 16-23 GB -> qwen3:14b,
+  #     24 GB or more -> qwen3:30b-a3b.
+  local-chat:
+    provider: ollama
+    model: qwen3:8b
+  # --- Groq free tier (private-safe, very fast). Limits are the free-tier
+  #     values; the router stops using a model before it hits them.
+  groq-large:
+    provider: groq
+    model: openai/gpt-oss-120b
+    limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
+  groq-fast:
+    provider: groq
+    model: llama-3.3-70b-versatile
+    limits: { rpm: 30, rpd: 1000, tpm: 12000, tpd: 100000 }
+  # --- Gemini free tier (public data only; very long context).
+  gemini-flash:
+    provider: gemini
+    model: gemini-flash-latest
+    limits: { rpm: 10, rpd: 250, tpm: 250000 }
+  # --- OpenRouter free models (public data only; last resort).
+  openrouter-free:
+    provider: openrouter
+    model: openai/gpt-oss-20b:free
+    limits: { rpm: 20, rpd: 50 }
+  # --- Paid slots: switched off while budget.monthly_usd_cap is 0.
+  claude:
+    provider: anthropic
+    model: claude-sonnet-5
+
+tasks:
+  chat:
+    privacy: personal
+    candidates: [local-chat, groq-large]
+  voice:
+    privacy: personal
+    candidates: [local-chat, groq-fast]
+  onboarding:
+    privacy: personal
+    candidates: [groq-large, local-chat]
+  extraction:
+    privacy: personal
+    candidates: [local-chat, groq-large]
+  ingestion:
+    privacy: personal
+    candidates: [local-chat, groq-large]
+  triage:
+    privacy: personal
+    candidates: [local-chat, groq-fast]
+  drafting:
+    privacy: personal
+    candidates: [groq-large, local-chat, claude]
+  confidential:
+    privacy: confidential
+    # Only local or zero-retention providers. If you sign a zero-data-retention
+    # agreement with a paid provider, set its zero_data_retention: true and add
+    # its model here.
+    candidates: [local-chat, groq-large]
+  public_summarize:
+    privacy: public
+    candidates: [gemini-flash, groq-fast, openrouter-free]

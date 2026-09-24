@@ -1,0 +1,102 @@
+[project]
+name = "jarvis-core"
+version = "0.1.0"
+description = "Jarvis personal AI assistant: core API, agents, memory, policy engine and model router."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "Proprietary" }
+dependencies = [
+  "fastapi>=0.141",
+  "uvicorn[standard]>=0.53",
+  "sse-starlette>=3.4",
+  "pydantic>=2.12",
+  "pydantic-settings>=2.15",
+  "pyyaml>=6.0.2",
+  "sqlalchemy[asyncio]>=2.0.54",
+  "asyncpg>=0.31",
+  "psycopg[binary]>=3.2",
+  "alembic>=1.20",
+  "pgvector>=0.5",
+  "pydantic-ai-slim[openai,groq,google,anthropic,openrouter]>=2.49",
+  "dbos>=3.0",
+  "cryptography>=50",
+  "webauthn>=3.0",
+  "httpx>=0.28",
+  "structlog>=26.1",
+  "pywebpush>=2.5",
+  "trafilatura>=2.2",
+  "pypdf>=6.19",
+  "numpy>=2.0",
+  "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+local-ml = ["fastembed>=0.8"]
+tracing = [
+  "opentelemetry-sdk>=1.42",
+  "opentelemetry-exporter-otlp-proto-http>=1.42",
+]
+
+[project.scripts]
+jarvis = "jarvis.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1",
+  "pytest-asyncio>=1.4",
+  "pytest-cov>=6.0",
+  "hypothesis>=6.168",
+  "respx>=0.23",
+  "ruff>=0.13",
+  "pyright>=1.1.405",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "-ra --strict-markers"
+markers = [
+  "db: needs the Postgres test database",
+  "slow: slower tests (property-based, end-to-end)",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning:dbos.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PT", "C4", "PIE", "RET"]
+ignore = [
+  "S101",   # assert is fine (tests + internal invariants)
+  "RUF001", "RUF002", "RUF003",  # intentional unicode in regexes/docs
+  "B008",   # FastAPI Depends() in defaults
+  "RET504",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S311", "PT011", "PT012", "E501", "RUF012"]
+"tests/conftest.py" = ["E402"]  # env vars must be set before importing the app
+
+[tool.pyright]
+include = ["jarvis"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]

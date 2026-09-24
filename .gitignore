@@ -1,0 +1,46 @@
+# --- Personal data: never commit ---
+/data/*
+!/data/.gitkeep
+*.sqlite
+*.db
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+secrets/
+credentials*.json
+token*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+htmlcov/
+.coverage
+coverage.xml
+*.egg-info/
+dist/
+build/
+
+# --- Node / web ---
+node_modules/
+web/dist/
+web/dev-dist/
+web/test-results/
+web/playwright-report/
+web/blob-report/
+*.tsbuildinfo
+.pnpm-store/
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

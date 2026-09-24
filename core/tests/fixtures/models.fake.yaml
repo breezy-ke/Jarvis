@@ -1,0 +1,22 @@
+# Offline model config for end-to-end tests and keyless development.
+# Needs JARVIS_ALLOW_FAKE_LLM=1 and JARVIS_ENV != production.
+version: 1
+providers:
+  fake:
+    kind: fake
+    local: true
+    trains_on_data: false
+models:
+  fake-local:
+    provider: fake
+    model: fake
+tasks:
+  chat: { privacy: personal, candidates: [fake-local] }
+  voice: { privacy: personal, candidates: [fake-local] }
+  onboarding: { privacy: personal, candidates: [fake-local] }
+  extraction: { privacy: personal, candidates: [fake-local] }
+  ingestion: { privacy: personal, candidates: [fake-local] }
+  triage: { privacy: personal, candidates: [fake-local] }
+  drafting: { privacy: personal, candidates: [fake-local] }
+  confidential: { privacy: confidential, candidates: [fake-local] }
+  public_summarize: { privacy: public, candidates: [fake-local] }

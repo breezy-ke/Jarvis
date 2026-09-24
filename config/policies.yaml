@@ -1,0 +1,102 @@
+# Jarvis action policies
+# ---------------------------------------------------------------------------
+# Agents never act directly. They *propose* actions, and this file decides what
+# happens to each kind of proposal:
+#
+#   L0  observe only     - proposals of this kind are refused
+#   L1  draft only       - kept as a draft; Jarvis never executes it
+#   L2  needs approval   - waits for you in the approval queue (the default)
+#   L3  act, then notify - runs automatically, and only once your profile is
+#                          signed off, the kill switch is off and every
+#                          validator passes
+#
+# Some rules are built into the code and cannot be relaxed here. Jarvis refuses
+# to start if this file breaks them:
+#   * money, deletions and production deploys can never be L3
+#   * high/critical-risk actions can never be L3, and can only be approved
+#     with a fresh passkey tap in the app
+#   * an approval is bound to a hash of the exact payload; any change means
+#     approving again
+version: 1
+
+defaults:
+  undo_window_seconds: 60
+  timezone: Africa/Nairobi
+  quiet_hours: { start: "21:30", end: "07:00" }
+
+# Which approval channels each risk level accepts.
+approval_channels:
+  low: [pwa, pwa_passkey, telegram, voice]
+  medium: [pwa, pwa_passkey, telegram, voice]
+  high: [pwa_passkey]
+  critical: [pwa_passkey]
+
+action_kinds:
+  # --- Available now ---------------------------------------------------------
+  notify.owner:
+    description: Send a push notification to your own devices.
+    autonomy: L3
+    risk: low
+    undo_window_seconds: 0
+    validators: [secrets_scan]
+
+  # --- Email (arrives in Phase 3) --------------------------------------------
+  email.label:
+    description: Apply or remove a Jarvis/* Gmail label.
+    autonomy: L3
+    risk: low
+    undo_window_seconds: 0
+  email.draft:
+    description: Save a reply as a Gmail draft (nothing is sent).
+    autonomy: L3
+    risk: low
+    undo_window_seconds: 0
+    validators: [secrets_scan]
+  email.send:
+    description: Send an email or a reply from your Gmail.
+    autonomy: L2
+    risk: medium
+    undo_window_seconds: 60
+    validators: [recipients_known, attachment_mentioned, secrets_scan, links_safe]
+
+  # --- Calendar (arrives in Phase 3 and 7) -----------------------------------
+  calendar.hold:
+    description: Put a private hold on your calendar (no invitees).
+    autonomy: L3
+    risk: low
+    undo_window_seconds: 0
+  calendar.invite:
+    description: Create an event and invite other people.
+    autonomy: L2
+    risk: medium
+    validators: [recipients_known]
+
+  # --- Outreach (arrives in Phase 5) -----------------------------------------
+  outreach.send:
+    description: Send a cold outreach email to a prospect.
+    autonomy: L2
+    risk: high
+    undo_window_seconds: 60
+    defer_during_quiet_hours: true
+    max_per_day: 10
+    validators: [secrets_scan, links_safe, opt_out_present]
+
+  # --- Studio (arrives in Phase 6) -------------------------------------------
+  deploy.preview:
+    description: Deploy a project to a private preview URL.
+    autonomy: L2
+    risk: medium
+  deploy.production:
+    description: Deploy a project to production or a client domain.
+    autonomy: L2
+    risk: high
+
+  # --- Always manual ---------------------------------------------------------
+  file.delete:
+    description: Delete files or data outside Jarvis's own memory.
+    autonomy: L2
+    risk: high
+  payment.request:
+    description: Send an invoice or payment request.
+    autonomy: L2
+    risk: critical
