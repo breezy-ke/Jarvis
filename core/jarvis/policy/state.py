@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -14,6 +15,21 @@ from jarvis.clock import Clock
 from jarvis.db.models import SystemState
 
 KILL_SWITCH_KEY = "kill_switch"
+
+_STAND_DOWN_RE = re.compile(
+    r"^(?:(?:hey|ok|okay|please)\s+)?(?:jarvis\s+)?(?:please\s+)?stand\s+down"
+    r"(?:\s+(?:now|please|jarvis))*$"
+)
+
+
+def is_stand_down(text: str) -> bool:
+    """ "Jarvis, stand down": the spoken or typed kill switch.
+
+    Only the whole phrase counts ("stand down the meeting" is a request, not a
+    command). A false alarm is harmless: engaging the switch only pauses Jarvis.
+    """
+    words = " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+    return bool(_STAND_DOWN_RE.match(words))
 
 
 @dataclass(frozen=True)

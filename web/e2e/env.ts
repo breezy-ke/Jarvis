@@ -22,6 +22,8 @@ export const serverEnv: Record<string, string> = {
   JARVIS_MODELS_FILE: new URL("../../core/tests/fixtures/models.fake.yaml", import.meta.url)
     .pathname,
   JARVIS_SECRET_KEY: secretKey,
+  // Sentence data for the voice pipeline (`make install` or CI fetches it).
+  NLTK_DATA: new URL("../../data/nltk_data", import.meta.url).pathname,
   JARVIS_ENABLE_SCHEDULER: "false",
   JARVIS_LOG_LEVEL: "WARNING",
   DATABASE_URL:

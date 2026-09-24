@@ -19,20 +19,27 @@ import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from jarvis.audit.log import AuditLog
 from jarvis.clock import Clock
 from jarvis.db.models import LLMCall
 from jarvis.db.session import SessionFactory, transaction
-from jarvis.llm.config import ModelConfig, ModelsConfig, PrivacyClass, ProviderConfig
+from jarvis.llm.config import (
+    ModelConfig,
+    ModelsConfig,
+    PrivacyClass,
+    ProviderConfig,
+    ProviderKind,
+)
 from jarvis.llm.privacy import allowed, explain
 from jarvis.llm.providers import build_model, provider_ready
 from jarvis.llm.quota import month_spend, quota_blocker
@@ -98,6 +105,16 @@ class StreamDone:
     model_ref: str
     usage: RunUsage
     new_messages: list[ModelMessage]
+
+
+def model_settings_for(cand: Candidate) -> ModelSettings | None:
+    """Per-model request settings from models.yaml (output cap, reasoning effort)."""
+    settings: dict[str, Any] = {}
+    if cand.model.max_tokens is not None:
+        settings["max_tokens"] = cand.model.max_tokens
+    if cand.model.reasoning is not None and cand.provider.kind != ProviderKind.FAKE:
+        settings["openai_reasoning_effort"] = cand.model.reasoning
+    return cast(ModelSettings, settings) if settings else None
 
 
 class ModelRouter:
@@ -223,6 +240,7 @@ class ModelRouter:
                     message_history=list(message_history or []),
                     usage_limits=usage_limits or DEFAULT_LIMITS,
                     instructions=instructions,
+                    model_settings=model_settings_for(cand),
                 )
             except FALLBACK_ERRORS as exc:
                 await self._record_failure(cand, task, effective, exc, started)
@@ -263,6 +281,7 @@ class ModelRouter:
                     message_history=list(message_history or []),
                     usage_limits=usage_limits or DEFAULT_LIMITS,
                     instructions=instructions,
+                    model_settings=model_settings_for(cand),
                 ) as result:
                     async for delta in result.stream_text(delta=True, debounce_by=None):
                         if delta:

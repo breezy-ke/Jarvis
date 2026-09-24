@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -23,6 +23,40 @@ from jarvis.profile.service import core_summary
 from jarvis.services import Services
 
 HISTORY_TURNS = 12
+
+UNENCRYPTED_CHANNELS = frozenset({"telegram"})
+"""Channels whose messages pass through someone else's servers in readable form.
+
+On these, Jarvis leaves sensitive memories and the personal profile section out
+of the model's context, and the channel masks anything secret-looking on the way
+out (see jarvis/telegram)."""
+
+PRIVACY_RULES = """
+## This chat isn't private
+The owner is writing from a chat app that isn't end-to-end encrypted. So:
+- Never write passwords, keys, tokens, full card, bank or ID numbers, or health,
+  money or family details. Say those are in the Jarvis app instead.
+- Sensitive memories are hidden from you here. If you can't find something,
+  suggest the app rather than guessing.
+"""
+
+TELEGRAM_STYLE = """
+## Telegram
+- Keep replies skimmable: short paragraphs and simple lists. No tables.
+- You can't approve actions yourself. When you propose one, Jarvis sends the
+  owner Approve and Reject buttons (high-risk actions need the app and a passkey).
+"""
+
+VOICE_STYLE = """
+## Voice mode
+The owner is talking to you and hears your reply spoken aloud. So:
+- Answer in one to three short sentences. If more is needed, give the gist and
+  offer to put the details in the app.
+- Plain speech only: no markdown, lists, tables, code, emoji or URLs.
+- Say numbers, dates and times the way a person would say them.
+- If you proposed an action, say what it is in one sentence; Jarvis will ask
+  the owner to confirm it.
+"""
 
 
 @dataclass(frozen=True)
@@ -70,8 +104,12 @@ class ChatService:
             messages.extend(ModelMessagesTypeAdapter.validate_python(turn.model_messages))
         return messages
 
-    async def build_context(self, user_text: str) -> str:
-        """Per-turn context: time, profile summary, relevant memories, system state."""
+    async def build_context(self, user_text: str, *, redact: bool = False) -> str:
+        """Per-turn context: time, profile summary, relevant memories, system state.
+
+        With `redact`, sensitive memories and the personal profile section are left
+        out, so the model can't repeat them on a channel that isn't private.
+        """
         s = self._s
         now_local = s.clock.now().astimezone(s.policies_config.tz)
         async with s.session_factory() as session:
@@ -83,19 +121,45 @@ class ChatService:
                 .select_from(ActionProposal)
                 .where(ActionProposal.status == Status.PENDING)
             )
-            facts = await search_facts(session, s.embedder, user_text, now=s.clock.now(), limit=6)
+            facts = await search_facts(
+                session,
+                s.embedder,
+                user_text,
+                now=s.clock.now(),
+                limit=6,
+                exclude_sensitive=redact,
+            )
         tz_name = s.policies_config.defaults.timezone
-        return (
+        profile = core_summary(snapshot.profile, exclude=("personal",) if redact else ())
+        context = (
             f"## Right now\n{now_local:%A %d %B %Y, %H:%M} ({tz_name}). "
             f"Pending approvals: {pending or 0}. Kill switch: {'ON' if kill.engaged else 'off'}. "
             f"Autonomy: {'on' if gate.open else 'off'} ({gate.reason}).\n\n"
-            f"## Owner profile\n{core_summary(snapshot.profile)}\n\n"
+            f"## Owner profile\n{profile}\n\n"
             f"## Possibly relevant memories\n{render_facts(facts)}"
         )
+        if redact:
+            context += PRIVACY_RULES
+            topics = snapshot.profile.boundaries.sensitive_topics
+            if topics:
+                context += f"- Don't discuss these topics here: {'; '.join(topics)}.\n"
+        return context
 
     async def stream_reply(
-        self, text: str, *, conversation_id: uuid.UUID | None = None, channel: str = "pwa"
-    ) -> AsyncIterator[ChatEvent]:
+        self,
+        text: str,
+        *,
+        conversation_id: uuid.UUID | None = None,
+        channel: str = "pwa",
+        mode: Literal["text", "voice"] = "text",
+        extra_instructions: str | None = None,
+    ) -> AsyncGenerator[ChatEvent, None]:
+        """Stream Jarvis's reply to `text`, saving both sides of the exchange.
+
+        Voice mode uses the `voice` model task (fast, no reasoning pause) and asks
+        for short spoken answers. If the owner talks over a voice reply, the voice
+        pipeline keeps what was already said via `save_interrupted`.
+        """
         s = self._s
         text = text.strip()
         if conversation_id is None:
@@ -120,14 +184,26 @@ class ChatService:
         yield ChatEvent("start", {"conversation_id": str(conversation_id)})
 
         history = await self._history(conversation_id)
-        context = await self.build_context(text)
-        deps = AgentDeps(services=s, actor="agent:jarvis", conversation_id=conversation_id)
+        redact = channel in UNENCRYPTED_CHANNELS
+        context = await self.build_context(text, redact=redact)
+        if channel == "telegram":
+            context += TELEGRAM_STYLE
+        if mode == "voice":
+            context += VOICE_STYLE
+        if extra_instructions:
+            context += "\n" + extra_instructions
+        deps = AgentDeps(
+            services=s,
+            actor="agent:jarvis",
+            conversation_id=conversation_id,
+            redact_sensitive=redact,
+        )
         chunks: list[str] = []
         try:
             async for event in s.router.stream(
                 self.agent,
                 text,
-                task="chat",
+                task="voice" if mode == "voice" else "chat",
                 deps=deps,
                 message_history=history,
                 instructions=context,
@@ -159,6 +235,24 @@ class ChatService:
                     )
                 )
             yield ChatEvent("error", {"message": message})
+
+    async def save_interrupted(
+        self, conversation_id: uuid.UUID, text: str, *, mode: str = "voice"
+    ) -> None:
+        """Keep the part of a reply the owner heard before talking over it."""
+        if not text.strip():
+            return
+        async with transaction(self._s.session_factory) as session:
+            session.add(
+                ChatMessage(
+                    id=uuid.uuid4(),
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=text.strip() + " …",
+                    created_at=self._s.clock.now(),
+                    meta={"interrupted": True, "mode": mode},
+                )
+            )
 
     async def _save_reply(
         self, conversation_id: uuid.UUID, done: StreamDone, streamed: str

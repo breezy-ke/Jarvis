@@ -230,6 +230,36 @@ class RecoveryCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(TZ)
 
 
+class VoiceDevice(Base):
+    """A paired voice satellite (e.g. the Windows tray app). Voice access only."""
+
+    __tablename__ = "voice_devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(80))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(TZ)
+    last_seen_at: Mapped[datetime | None] = mapped_column(TZ)
+    revoked_at: Mapped[datetime | None] = mapped_column(TZ)
+
+
+class TelegramNotice(Base):
+    """An approval request sent to the owner on Telegram, kept in step with its action."""
+
+    __tablename__ = "telegram_notices"
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("action_proposals.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    shown_status: Mapped[str] = mapped_column(String(24))
+    created_at: Mapped[datetime] = mapped_column(TZ)
+    updated_at: Mapped[datetime] = mapped_column(TZ)
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
 

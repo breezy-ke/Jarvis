@@ -28,6 +28,7 @@ dependencies = [
   "pypdf>=6.19",
   "numpy>=2.0",
   "python-multipart>=0.0.20",
+  "pipecat-ai[websocket]>=1.11,<2",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +71,8 @@ markers = [
 ]
 filterwarnings = [
   "ignore::DeprecationWarning:dbos.*",
+  "ignore::DeprecationWarning:pipecat.*",
+  "ignore:`AudioContextTTSService` is deprecated:DeprecationWarning",
 ]
 
 [tool.ruff]

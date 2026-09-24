@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any
 
-import httpx
 import pytest
 import respx
-from fastapi import FastAPI
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -21,96 +17,9 @@ from jarvis.memory.embeddings import HashEmbedder
 from jarvis.policy.registry import ActionSpec, ExecutionContext
 from jarvis.services import Services, build_services
 from tests.conftest import fake_models_config, make_settings
-from tests.webauthn_helpers import SoftAuthenticator
+from tests.integration.api_helpers import Harness, login, register, setup_token, step_up
 
 pytestmark = pytest.mark.db
-
-ORIGIN = "http://localhost:8080"
-
-
-@dataclass
-class Harness:
-    app: FastAPI
-    client: httpx.AsyncClient
-    state: AppState
-    authenticator: SoftAuthenticator
-    clock: FrozenClock
-
-    @property
-    def services(self) -> Services:
-        return self.state.services
-
-
-@pytest.fixture
-async def harness(session_factory: SessionFactory, clock: FrozenClock) -> AsyncIterator[Harness]:
-    settings = make_settings(JARVIS_ENABLE_SCHEDULER=False)
-
-    def factory(s: Any, sf: SessionFactory) -> Services:
-        return build_services(
-            s, sf, clock=clock, embedder=HashEmbedder(), models_config=fake_models_config()
-        )
-
-    app = create_app(settings, services_factory=factory, run_background=False)
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url=ORIGIN, headers={"Origin": ORIGIN}
-        ) as client:
-            yield Harness(
-                app=app,
-                client=client,
-                state=app.state.jarvis,
-                authenticator=SoftAuthenticator(rp_id="localhost", origin=ORIGIN),
-                clock=clock,
-            )
-
-
-async def setup_token(h: Harness) -> str:
-    async with transaction(h.services.session_factory) as session:
-        return await h.state.auth.issue_setup_token(session)
-
-
-async def register(h: Harness) -> list[str]:
-    token = await setup_token(h)
-    options = (
-        await h.client.post("/api/auth/register/options", json={"setup_token": token})
-    ).json()
-    credential = h.authenticator.register(options["options"])
-    resp = await h.client.post(
-        "/api/auth/register/verify",
-        json={
-            "challenge_id": options["challenge_id"],
-            "credential": credential,
-            "device_name": "Test phone",
-            "setup_token": token,
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["recovery_codes"]
-
-
-async def login(h: Harness) -> None:
-    options = (await h.client.post("/api/auth/login/options")).json()
-    resp = await h.client.post(
-        "/api/auth/login/verify",
-        json={
-            "challenge_id": options["challenge_id"],
-            "credential": h.authenticator.assertion(options["options"]),
-        },
-    )
-    assert resp.status_code == 200, resp.text
-
-
-async def step_up(h: Harness) -> None:
-    options = (await h.client.post("/api/auth/step-up/options")).json()
-    resp = await h.client.post(
-        "/api/auth/step-up/verify",
-        json={
-            "challenge_id": options["challenge_id"],
-            "credential": h.authenticator.assertion(options["options"]),
-        },
-    )
-    assert resp.status_code == 200, resp.text
 
 
 def sse_events(body: str) -> list[tuple[str, dict[str, Any]]]:
@@ -216,6 +125,8 @@ async def test_security_headers(harness: Harness) -> None:
     assert resp.status_code == 200
     assert "frame-ancestors 'none'" in resp.headers["content-security-policy"]
     assert "img-src 'self' data: blob:" in resp.headers["content-security-policy"]
+    # The voice socket is allowed by name (older Safari doesn't count it as 'self').
+    assert "connect-src 'self' ws://localhost:8080;" in resp.headers["content-security-policy"]
     assert resp.headers["x-frame-options"] == "DENY"
     assert resp.headers["cache-control"] == "no-store"
 

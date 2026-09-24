@@ -1,0 +1,48 @@
+# Jarvis voice settings
+# ---------------------------------------------------------------------------
+# Speech recognition and speech synthesis run in the `speech` container on
+# your PC, so what you say never leaves it. `make pull-models` downloads the
+# models named here; `make restart` applies changes.
+version: 1
+
+speech:
+  # Speech-to-text (faster-whisper). large-v3-turbo is fast on a GPU and
+  # understands English and Swahili. On a PC without an NVIDIA GPU, use a
+  # smaller model such as Systran/faster-whisper-small.
+  stt_model: deepdml/faster-whisper-large-v3-turbo-ct2
+  # "auto" detects the language on every turn; "en" or "sw" pins it (a little
+  # faster and more accurate if you only ever speak one).
+  language: auto
+  # Text-to-speech (Kokoro). British male voices: bm_george, bm_lewis,
+  # bm_daniel, bm_fable. Try them in the app: Settings > Voice.
+  tts_model: speaches-ai/Kokoro-82M-v1.0-ONNX
+  voice: bm_george
+  speed: 1.0
+
+conversation:
+  # If an answer takes longer than this to start, Jarvis says a short
+  # acknowledgement so you know it heard you.
+  filler_after_seconds: 1.5
+  fillers: ["One moment.", "Let me check.", "Working on it."]
+  # How long "say confirm or cancel" waits for your answer.
+  confirmation_seconds: 60
+
+# Approving an action by voice needs one of these exact phrases (case and
+# punctuation don't matter). Anything else counts as a new request, and the
+# action keeps waiting in the app. High-risk actions can never be approved by
+# voice, whatever this file says.
+confirm_phrases:
+  - confirm
+  - yes confirm
+  - confirm it
+  - go ahead
+  - yes go ahead
+  - approve it
+  - send it
+cancel_phrases:
+  - cancel
+  - cancel it
+  - no cancel
+  - don't
+  - do not
+  - reject it

@@ -46,9 +46,17 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
             query: What to look for, in natural language.
         """
         services = ctx.deps.services
+        redact = ctx.deps.redact_sensitive
         async with services.session_factory() as session:
-            facts = await search_facts(session, services.embedder, query, now=services.clock.now())
-            episodes = await search_episodes(session, services.embedder, query)
+            facts = await search_facts(
+                session,
+                services.embedder,
+                query,
+                now=services.clock.now(),
+                exclude_sensitive=redact,
+            )
+            # Past-conversation summaries aren't graded for sensitivity: hold them back too.
+            episodes = [] if redact else await search_episodes(session, services.embedder, query)
         await audit_tool(ctx.deps, "search_memory", "Searched memory", {"hits": len(facts)})
         lines = [
             f"- (id {f.fact.id}) [{f.fact.category}] {f.fact.subject} — {f.fact.predicate}: "

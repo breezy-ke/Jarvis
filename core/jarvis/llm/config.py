@@ -61,6 +61,10 @@ class Limits(BaseModel):
     tpd: int | None = Field(default=None, ge=1)
 
 
+# Providers that accept the OpenAI-style `reasoning_effort` setting.
+REASONING_KINDS = frozenset({"ollama", "openai", "openrouter", "openai_compatible", "fake"})
+
+
 class ModelConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -69,6 +73,9 @@ class ModelConfig(BaseModel):
     limits: Limits = Limits()
     usd_per_mtok_in: float = Field(default=0.0, ge=0)
     usd_per_mtok_out: float = Field(default=0.0, ge=0)
+    # "none" turns off a thinking model's reasoning pause (e.g. for voice).
+    reasoning: Literal["none", "low", "medium", "high"] | None = None
+    max_tokens: int | None = Field(default=None, ge=16, le=64_000)
 
 
 class TaskConfig(BaseModel):
@@ -101,6 +108,14 @@ class ModelsConfig(BaseModel):
         for ref, model in self.models.items():
             if model.provider not in self.providers:
                 problems.append(f"models.{ref}: unknown provider {model.provider!r}")
+            elif (
+                model.reasoning is not None
+                and self.providers[model.provider].kind.value not in REASONING_KINDS
+            ):
+                problems.append(
+                    f"models.{ref}: reasoning isn't supported for "
+                    f"{self.providers[model.provider].kind.value} providers"
+                )
         for name, task in self.tasks.items():
             for ref in task.candidates:
                 if ref not in self.models:

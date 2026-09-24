@@ -25,6 +25,11 @@ from jarvis.services import Services
 pytestmark = pytest.mark.db
 
 
+# Shaped like Google's: '/' and '.' never occur in the vault's (URL-safe base64) ciphertext,
+# so finding it there would mean it was stored in the clear.
+REFRESH_TOKEN = "1//refresh.token-for-tests"
+
+
 @pytest.fixture
 async def http() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient() as client:
@@ -55,7 +60,12 @@ async def connect_google(services: Services, auth: GoogleAuth) -> None:
     with respx.mock:
         respx.post(TOKEN_URL).respond(
             200,
-            json={"access_token": "at", "refresh_token": "rt", "expires_in": 3600, "scope": "s"},
+            json={
+                "access_token": "at",
+                "refresh_token": REFRESH_TOKEN,
+                "expires_in": 3600,
+                "scope": "s",
+            },
         )
         respx.get(f"{GMAIL}/profile").respond(200, json={"emailAddress": "owner@gmail.com"})
         async with transaction(services.session_factory) as session:
@@ -78,7 +88,9 @@ async def test_oauth_uses_pkce_and_encrypts_tokens(services: Services, auth: Goo
     async with services.session_factory() as session:
         row = await session.get(OAuthToken, "google")
     assert row is not None
-    assert b"rt" not in row.token_encrypted  # stored encrypted
+    assert REFRESH_TOKEN.encode() not in row.token_encrypted  # stored encrypted
+    stored = json.loads(services.vault.decrypt_str(row.token_encrypted))
+    assert stored["refresh_token"] == REFRESH_TOKEN
 
 
 async def test_oauth_state_is_single_use_and_expires(
