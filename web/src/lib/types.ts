@@ -203,3 +203,44 @@ export interface Passkey {
   created_at: string;
   last_used_at: string | null;
 }
+
+export interface VoiceDevice {
+  id: string;
+  name: string;
+  created_at: string;
+  last_seen_at: string | null;
+}
+
+export interface VoiceStatus {
+  enabled: boolean;
+  /** Why voice is switched off (a broken config/voice.yaml). */
+  error?: string | null;
+  /** Why live voice can't run right now, although it's configured. */
+  problem?: string | null;
+  speech?: { reachable: boolean; stt_ready: boolean; tts_ready: boolean; detail: string };
+  voice?: string;
+  stt_model?: string;
+  language?: string;
+  confirm_phrase?: string;
+  cancel_phrase?: string;
+  devices: VoiceDevice[];
+}
+
+export interface PairingCode {
+  code: string;
+  expires_at: string;
+}
+
+export interface TelegramStatus {
+  configured: boolean;
+  paired: boolean;
+  running?: boolean;
+  bot_username?: string | null;
+  error?: string | null;
+  owner?: { name: string; username: string | null; paired_at: string } | null;
+}
+
+export interface TelegramLink extends PairingCode {
+  link: string | null;
+  bot_username: string;
+}

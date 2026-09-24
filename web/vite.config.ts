@@ -49,7 +49,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: { "/api": { target: apiTarget, changeOrigin: false } },
+    // ws: the live voice socket (/api/voice/ws) goes through the proxy too.
+    proxy: { "/api": { target: apiTarget, changeOrigin: false, ws: true } },
   },
   build: { outDir: "dist", target: "es2022", sourcemap: false },
   test: {

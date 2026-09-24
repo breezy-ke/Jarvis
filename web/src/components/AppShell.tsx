@@ -6,6 +6,7 @@ import {
   History,
   Home,
   MessageSquare,
+  Mic,
   Settings,
   ShieldAlert,
   Sparkles,
@@ -44,6 +45,7 @@ export function AppShell() {
   const nav: NavItem[] = [
     { to: "/", label: "Home", icon: <Home />, mobile: true },
     { to: "/chat", label: "Chat", icon: <MessageSquare />, mobile: true },
+    { to: "/talk", label: "Talk", icon: <Mic />, mobile: true },
     {
       to: "/approvals",
       label: "Approvals",
@@ -61,7 +63,7 @@ export function AppShell() {
     { to: "/onboarding", label: "Onboarding", icon: <Sparkles /> },
     { to: "/sources", label: "Sources", icon: <UserRoundSearch /> },
     { to: "/activity", label: "Activity", icon: <History /> },
-    { to: "/settings", label: "Settings", icon: <Settings />, mobile: true },
+    { to: "/settings", label: "Settings", icon: <Settings /> },
   ];
 
   return (
@@ -98,9 +100,18 @@ export function AppShell() {
             <Orb size={24} />
             <span className="font-semibold">{status?.assistant_name ?? "Jarvis"}</span>
           </Link>
-          <Link to="/onboarding" className="text-sm text-muted-foreground" aria-label="Onboarding">
-            <Sparkles className="size-5" />
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              to="/onboarding"
+              className="text-sm text-muted-foreground"
+              aria-label="Onboarding"
+            >
+              <Sparkles className="size-5" />
+            </Link>
+            <Link to="/settings" className="text-sm text-muted-foreground" aria-label="Settings">
+              <Settings className="size-5" />
+            </Link>
+          </div>
         </header>
         <KillSwitchBanner />
         <main

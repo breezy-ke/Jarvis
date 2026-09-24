@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { History, Plus } from "lucide-react";
+import { History, Mic, Plus } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { ChatView, type ChatLine } from "@/components/ChatView";
@@ -118,16 +118,23 @@ export function ChatPage() {
       </aside>
 
       <section className="min-w-0 flex-1">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-2">
           <h1 className="text-xl font-semibold">Chat</h1>
-          <Button
-            variant="outline"
-            size="sm"
-            className="md:hidden"
-            onClick={() => setShowHistory(true)}
-          >
-            <History /> History
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link to="/talk" search={conversationId ? { c: conversationId } : {}}>
+                <Mic /> Talk
+              </Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="md:hidden"
+              onClick={() => setShowHistory(true)}
+            >
+              <History /> History
+            </Button>
+          </div>
         </div>
         <ChatView
           lines={lines}

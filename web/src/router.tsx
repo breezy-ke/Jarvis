@@ -21,6 +21,7 @@ import { OnboardingModulePage, OnboardingPage } from "./routes/Onboarding";
 import { SettingsPage } from "./routes/Settings";
 import { SetupPage } from "./routes/Setup";
 import { SourcesPage } from "./routes/Sources";
+import { TalkPage } from "./routes/Talk";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -79,6 +80,14 @@ const chatRoute = createRoute({
     typeof search.c === "string" ? { c: search.c } : {},
 });
 
+const talkRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/talk",
+  component: TalkPage,
+  validateSearch: (search: Record<string, unknown>): { c?: string } =>
+    typeof search.c === "string" ? { c: search.c } : {},
+});
+
 const approvalsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/approvals",
@@ -127,6 +136,7 @@ const routeTree = rootRoute.addChildren([
   appRoute.addChildren([
     homeRoute,
     chatRoute,
+    talkRoute,
     approvalsRoute,
     activityRoute,
     onboardingRoute,

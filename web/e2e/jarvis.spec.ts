@@ -127,6 +127,30 @@ test.describe.serial("Jarvis end to end", () => {
     await expect(page.getByText("Kill switch is on.")).toBeHidden();
   });
 
+  test("talk to Jarvis and hear the answer", async () => {
+    await page.goto("/talk");
+    await expectAccessible(page, "talk");
+    await page.getByRole("button", { name: "Start talking", exact: true }).click();
+    // The fake microphone says one sentence; Jarvis's own turn detection decides it's done.
+    const transcript = page.getByRole("region", { name: "Transcript" });
+    await expect(transcript).toContainText("What is on my calendar today?", { timeout: 30_000 });
+    await expect(transcript).toContainText("Understood. You said: What is on my calendar today?", {
+      timeout: 30_000,
+    });
+    await expect(page.getByRole("link", { name: "Open in Chat" })).toBeVisible();
+    await page.getByRole("button", { name: "End" }).click();
+    await expect(page.getByRole("button", { name: "Start talking", exact: true })).toBeVisible();
+    await expectAccessible(page, "talk after a conversation");
+  });
+
+  test("settings show voice and Telegram", async () => {
+    await page.goto("/settings");
+    await expect(page.getByText("Speech server")).toBeVisible();
+    await expect(page.getByText("George (British male)")).toBeVisible();
+    await expect(page.getByText("Set up your Telegram bot")).toBeVisible();
+    await expectAccessible(page, "settings");
+  });
+
   test("the activity log is intact", async () => {
     await page.goto("/activity");
     await page.getByRole("button", { name: "Verify integrity" }).click();

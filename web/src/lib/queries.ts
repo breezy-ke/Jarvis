@@ -20,6 +20,8 @@ export const keys = {
   policies: ["policies"] as const,
   passkeys: ["passkeys"] as const,
   push: ["push"] as const,
+  voice: ["voice"] as const,
+  telegram: ["telegram"] as const,
 };
 
 export function useAuthStatus() {
