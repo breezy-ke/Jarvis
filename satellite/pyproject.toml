@@ -1,0 +1,77 @@
+[project]
+name = "jarvis-satellite"
+version = "0.1.0"
+description = "Say “Hey Jarvis” to your Windows PC: the wake word, microphone and speaker for Jarvis."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+dependencies = [
+  "numpy>=2.0",
+  "websockets>=15.0",
+  "httpx>=0.28",
+  "keyring>=25.6",
+  "sounddevice>=0.5.2",
+  # Windows-only: the wake word model, the tray icon and the mute hotkey.
+  # (openWakeWord needs tflite-runtime on Linux, which has no Python 3.12 build.)
+  "openwakeword==0.6.0; sys_platform == 'win32'",
+  "pystray>=0.19.5; sys_platform == 'win32'",
+  "pillow>=11.0; sys_platform == 'win32'",
+  "pynput>=1.8.1; sys_platform == 'win32'",
+]
+
+[project.scripts]
+jarvis-satellite = "jarvis_satellite.__main__:main"
+
+[project.gui-scripts]
+# The same app without a console window: what starts at logon.
+jarvis-satellite-tray = "jarvis_satellite.__main__:tray_main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1",
+  "pytest-asyncio>=1.4",
+  "ruff>=0.13",
+  "pyright>=1.1.405",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis_satellite"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PT", "C4", "PIE", "RET"]
+ignore = [
+  "S101",   # assert is fine (tests + internal invariants)
+  "RUF001", "RUF002", "RUF003",  # intentional unicode in messages
+  "RET504",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S311", "PT011", "E501"]
+"bench/**" = ["S311"]
+
+[tool.pyright]
+include = ["jarvis_satellite", "bench"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportMissingImports = "warning"  # Windows-only packages aren't installed on Linux
+venvPath = "."
+venv = ".venv"
+
+[tool.uv]
+# Resolve Windows (the real app) and Linux (CI, development) separately, so the
+# Windows-only wake-word dependencies never have to install on Linux.
+environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
