@@ -1,0 +1,24 @@
+# Development only: a throwaway Postgres + pgvector for the test suites.
+#   make dev-db       start it on 127.0.0.1:5432 (data lives in memory)
+#   make dev-db-down  remove it
+# Never point it at real data: the tests wipe these databases.
+name: jarvis-dev
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: jarvis
+      POSTGRES_DB: jarvis_test
+    ports:
+      - "127.0.0.1:5432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./scripts/dev/create-test-dbs.sql:/docker-entrypoint-initdb.d/create-test-dbs.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis_e2e"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

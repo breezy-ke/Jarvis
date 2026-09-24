@@ -1,0 +1,73 @@
+# Checks that run before every commit. Set up once with:
+#   uv tool install pre-commit && pre-commit install
+# CI runs the same checks, so skipping them locally only delays the failure.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: detect-private-key
+        exclude: ^core/tests/unit/test_security\.py$ # a fake key header that tests the leak scanner
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=no]
+
+  # Secrets must never reach the repo (config: .gitleaks.toml).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8 # keep in step with ruff in core/uv.lock
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^core/
+      - id: ruff-format
+        files: ^core/
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x]
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.14.1-1
+    hooks:
+      - id: shfmt
+
+  # These use the project's own tools, so run `make install` first.
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: bash -c 'cd core && uv run --frozen pyright'
+        language: system
+        files: ^core/.*\.py$
+        pass_filenames: false
+      - id: eslint
+        name: eslint
+        entry: bash -c 'cd web && pnpm exec eslint --max-warnings=0 .'
+        language: system
+        files: ^web/.*\.(ts|tsx|js)$
+        pass_filenames: false
+      - id: prettier
+        name: prettier
+        entry: bash -c 'cd web && pnpm exec prettier --check .'
+        language: system
+        files: ^web/
+        pass_filenames: false
+      - id: tsc
+        name: tsc
+        entry: bash -c 'cd web && pnpm exec tsc -b --pretty'
+        language: system
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false

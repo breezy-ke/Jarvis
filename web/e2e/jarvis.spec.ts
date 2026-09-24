@@ -21,8 +21,12 @@ async function send(page: Page, text: string) {
 }
 
 async function expectAccessible(page: Page, label: string) {
-  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  const serious = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  const serious = results.violations.filter(
+    (v) => v.impact === "serious" || v.impact === "critical",
+  );
   expect(
     serious.map((v) => `${label}: ${v.id} (${v.nodes.map((n) => n.target.join(" ")).join(", ")})`),
   ).toEqual([]);
@@ -137,7 +141,9 @@ test.describe.serial("Jarvis end to end", () => {
     await expect(bottomNav).toBeVisible();
     await bottomNav.getByRole("link", { name: "Approvals" }).click();
     await expect(page.getByRole("heading", { name: "Approvals" })).toBeVisible();
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
     expect(overflow).toBe(false);
     for (const path of ["/", "/settings", "/sources", "/onboarding"]) {
       await page.goto(path);

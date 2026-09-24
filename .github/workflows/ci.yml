@@ -1,0 +1,230 @@
+# Every push runs the full suite. Checks from a branch push also show on its
+# pull request, so pull_request only runs for forks (to avoid running twice).
+name: CI
+
+on:
+  push:
+    paths-ignore: ["docs/**", "**/*.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1" # never change uv.lock in CI
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  core:
+    name: Core (ruff, pyright, pytest)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17
+        env:
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: jarvis
+          POSTGRES_DB: jarvis_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jarvis -d jarvis_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      JARVIS_TEST_DATABASE_URL: postgresql+asyncpg://jarvis:jarvis@127.0.0.1:5432/jarvis_test
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.17"
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: core/uv.lock
+      - run: uv sync --all-extras
+      - name: ruff
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: pyright
+        run: uv run pyright
+      - name: pytest
+        run: uv run pytest
+
+  web:
+    name: Web (eslint, prettier, tsc, vitest, build)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  e2e:
+    name: Browser end-to-end (Playwright)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17
+        env:
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: jarvis
+          POSTGRES_DB: jarvis_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jarvis -d jarvis_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.17"
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: core/uv.lock
+      - run: uv sync
+        working-directory: core
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec vite build
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
+
+  docker:
+    name: Docker image and stack smoke test
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: make secrets (builds the image, creates .env)
+        run: make secrets
+      - name: Configure for CI
+        run: |
+          scripts/wsl/set-env.sh JARVIS_PUBLIC_ORIGIN http://localhost:8080
+          scripts/wsl/set-env.sh PHOENIX_COLLECTOR_ENDPOINT ""
+          test "$(stat -c %a .env)" = 600
+      - name: Validate the compose files
+        run: |
+          docker compose -f docker-compose.yml -f compose.gpu.yml config --quiet
+          docker compose -f compose.dev.yml config --quiet
+      - name: Start the database and core
+        run: docker compose up -d --wait --wait-timeout 180 core
+      - name: Smoke test
+        run: |
+          curl -fsS http://127.0.0.1:8080/api/health
+          curl -fsS http://127.0.0.1:8080/ | grep -q 'id="root"'
+          curl -fsS http://127.0.0.1:8080/manifest.webmanifest | grep -q '"Jarvis"'
+          curl -fsS http://127.0.0.1:8080/api/auth/status | grep -q '"setup_complete":false'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/status)" = 401
+          docker compose logs core | grep -q "FIRST-RUN SETUP CODE"
+          docker compose exec -T core jarvis setup-token
+          test -n "$(docker compose exec -T core jarvis local-models)"
+          docker compose exec -T core jarvis doctor
+      - name: Backup round trip
+        run: |
+          make backup GPU=0
+          ls -l data/backups/*.dump
+      - name: Logs
+        if: always()
+        run: docker compose logs --no-color --tail=300
+
+  scripts:
+    name: Shell scripts and secret scan
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # scan the whole history for secrets
+      - name: shellcheck
+        run: shellcheck -x scripts/wsl/*.sh scripts/dev/*.sh
+      - name: shfmt
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shfmt" https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_linux_amd64
+          echo "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf  $RUNNER_TEMP/shfmt" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/shfmt"
+          "$RUNNER_TEMP/shfmt" -d scripts
+      - name: gitleaks
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git . --redact --verbose --no-banner
+
+  windows:
+    name: Windows setup script
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: PSScriptAnalyzer (errors and warnings, Windows PowerShell 5.1 compatibility)
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $profile51 = 'win-48_x64_10.0.17763.0_5.1.17763.316_x64_4.0.30319.42000_framework'
+          $settings = @{
+            Severity = @('Error', 'Warning')
+            Rules = @{
+              PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1', '7.0') }
+              PSUseCompatibleCommands = @{ Enable = $true; TargetProfiles = @($profile51) }
+              PSUseCompatibleTypes = @{ Enable = $true; TargetProfiles = @($profile51) }
+            }
+          }
+          $results = Invoke-ScriptAnalyzer -Path scripts/windows -Recurse -Settings $settings
+          $results | Format-Table -AutoSize -Wrap
+          if ($results) { exit 1 }
+      - name: Helper tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\scripts\windows\setup.tests.ps1
+      - name: Helper tests (PowerShell 7)
+        shell: pwsh
+        run: ./scripts/windows/setup.tests.ps1

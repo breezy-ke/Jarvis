@@ -1,0 +1,103 @@
+# Jarvis stack. Start with `make up` (it adds compose.gpu.yml when your NVIDIA
+# GPU is set up for Docker).
+# Every port binds to 127.0.0.1 only: your phone reaches Jarvis through
+# Tailscale Serve (HTTPS), never through an open router port.
+name: jarvis
+
+# Docker keeps container logs forever by default; cap them on an always-on PC.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run `make secrets` first}
+      POSTGRES_DB: jarvis
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jarvis-core:local
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jarvis:${POSTGRES_PASSWORD}@postgres:5432/jarvis
+      # Defaults only apply when unset: set PHOENIX_COLLECTOR_ENDPOINT= (empty) to turn tracing off.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL-http://ollama:11434/v1}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT-http://phoenix:6006/v1/traces}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Gives durable workflows time to checkpoint before a restart.
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - jarvisdata:/data
+    networks: [internal, egress]
+
+  ollama:
+    image: ollama/ollama:0.34.4
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ollama:/root/.ollama
+    networks: [internal, egress]
+
+  phoenix:
+    image: arizephoenix/phoenix:version-20.16-nonroot
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      # No usage analytics. Your traces never leave this PC either way.
+      PHOENIX_TELEMETRY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:6006:6006"
+    volumes:
+      - phoenix:/mnt/data
+    # Docker can't publish a port from an internal-only network, so the trace
+    # viewer also joins `egress`. Open it on the PC at http://localhost:6006.
+    networks: [internal, egress]
+
+  # Phase 4 (web research). Start it with `make research-up`.
+  searxng:
+    image: searxng/searxng:2026.9.23-3cd69d30e
+    profiles: [research]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?Run `make secrets` first}
+    volumes:
+      - ./config/searxng:/etc/searxng:ro
+    networks: [internal, egress]
+
+volumes:
+  pgdata:
+  jarvisdata:
+  ollama:
+  phoenix:
+
+networks:
+  internal:
+    internal: true # no internet access from this network
+  egress: {}

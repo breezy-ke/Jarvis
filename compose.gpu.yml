@@ -1,0 +1,10 @@
+# Adds your NVIDIA GPU to Ollama (local AI). Used by `make up`.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

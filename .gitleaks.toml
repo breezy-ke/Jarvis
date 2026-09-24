@@ -1,0 +1,15 @@
+# gitleaks: blocks commits that contain secrets (pre-commit and CI).
+# Uses the built-in rules, plus one narrow exception.
+title = "Jarvis"
+
+[extend]
+useDefault = true
+
+# Only this exact fake key, only in the Python tests (which prove Jarvis's own
+# leak scanner catches it). Any other secret, anywhere, still fails.
+[[allowlists]]
+description = "The fake AWS key used by the leak-scanner tests"
+targetRules = ["aws-access-token"]
+condition = "AND"
+paths = ['''^core/tests/.*\.py$''']
+regexes = ['''^AKIAABCDEFGHIJKLMNOP$''']

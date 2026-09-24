@@ -19,7 +19,8 @@ export const serverEnv: Record<string, string> = {
   JARVIS_PORT: String(port),
   JARVIS_HOST: "127.0.0.1",
   JARVIS_WEB_DIST: new URL("../dist", import.meta.url).pathname,
-  JARVIS_MODELS_FILE: new URL("../../core/tests/fixtures/models.fake.yaml", import.meta.url).pathname,
+  JARVIS_MODELS_FILE: new URL("../../core/tests/fixtures/models.fake.yaml", import.meta.url)
+    .pathname,
   JARVIS_SECRET_KEY: secretKey,
   JARVIS_ENABLE_SCHEDULER: "false",
   JARVIS_LOG_LEVEL: "WARNING",
