@@ -1,12 +1,12 @@
 # Every push runs the full suite. Checks from a branch push also show on its
 # pull request, so pull_request only runs for forks (to avoid running twice).
+# No path filters: a first push or a rebase can look like "no changed files"
+# to GitHub, and a skipped run must never pass for a green one.
 name: CI
 
 on:
   push:
-    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
-    paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
 
 permissions:
