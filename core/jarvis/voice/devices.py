@@ -44,18 +44,23 @@ class DeviceService:
     async def pair(self, session: AsyncSession, code: str, name: str) -> tuple[VoiceDevice, str]:
         """Trade a pairing code for a device token. Raises PairingError."""
         await self._codes.redeem(session, code)
-        now = self._clock.now()
+        return await self.create_device(session, name)
+
+    async def create_device(
+        self, session: AsyncSession, name: str, *, actor: str = "owner"
+    ) -> tuple[VoiceDevice, str]:
+        """A new device and its token (shown once; only its hash is kept)."""
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
         device = VoiceDevice(
             id=uuid.uuid4(),
             name=(name.strip() or "Voice satellite")[:80],
             token_hash=sha256_hex(token),
-            created_at=now,
+            created_at=self._clock.now(),
         )
         session.add(device)
         await self._audit.append(
             session,
-            actor="owner",
+            actor=actor,
             event_type="voice.device_paired",
             subject_type="voice_device",
             subject_id=str(device.id),
@@ -85,14 +90,16 @@ class DeviceService:
         )
         return list(rows)
 
-    async def revoke(self, session: AsyncSession, device_id: uuid.UUID) -> bool:
+    async def revoke(
+        self, session: AsyncSession, device_id: uuid.UUID, *, actor: str = "owner"
+    ) -> bool:
         device = await session.get(VoiceDevice, device_id, with_for_update=True)
         if device is None or device.revoked_at is not None:
             return False
         device.revoked_at = self._clock.now()
         await self._audit.append(
             session,
-            actor="owner",
+            actor=actor,
             event_type="voice.device_revoked",
             subject_type="voice_device",
             subject_id=str(device.id),

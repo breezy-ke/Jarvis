@@ -11,6 +11,7 @@ GPU ?= $(shell scripts/wsl/detect-gpu.sh 2>/dev/null || echo 0)
 COMPOSE := docker compose -f docker-compose.yml$(if $(filter 1,$(GPU)), -f compose.gpu.yml)
 IMAGE := jarvis-core:local
 SERVICE ?= core
+RUNS ?= 5
 BACKUP_DIR := data/backups
 
 require_env = @test -f .env || { echo "No .env yet. Run: make secrets"; exit 1; }
@@ -87,11 +88,18 @@ doctor: ## Check the whole setup and explain how to fix anything missing (ONLINE
 	exit $${status:-0}
 
 .PHONY: pull-models
-pull-models: ## Download the local AI models named in config/models.yaml
+pull-models: ## Download the AI models: config/models.yaml (Ollama) and config/voice.yaml (speech)
 	$(call require_running,ollama)
+	$(call require_running,speech)
 	@for model in $$($(COMPOSE) exec -T core jarvis local-models); do \
 		echo "Pulling $$model"; $(COMPOSE) exec -T ollama ollama pull "$$model"; \
 	done
+	$(COMPOSE) exec -T core jarvis pull-speech-models
+
+.PHONY: bench-voice
+bench-voice: ## Time how fast Jarvis answers out loud (target: under 1.5 s; RUNS=5)
+	$(call require_running,core)
+	$(COMPOSE) exec -T core jarvis bench-voice --runs $(RUNS)
 
 .PHONY: update
 update: docker-ready ## Get the latest Jarvis and restart it

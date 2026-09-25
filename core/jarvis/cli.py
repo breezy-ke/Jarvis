@@ -88,6 +88,7 @@ def generate_secrets() -> dict[str, str]:
         "VAPID_PRIVATE_KEY": _b64url(private_raw),
         "VAPID_PUBLIC_KEY": _b64url(public_raw),
         "SEARXNG_SECRET": secrets.token_hex(32),
+        "SPEECH_API_KEY": secrets.token_urlsafe(32),
     }
 
 
@@ -101,14 +102,24 @@ def fill_env_file(path: Path, example: Path | None = None) -> list[str]:
     generated = generate_secrets()
     filled: list[str] = []
     out: list[str] = []
+    present: set[str] = set()
     for line in lines:
         name, sep, value = line.partition("=")
         key = name.strip()
+        if sep and not key.startswith("#"):
+            present.add(key)
         if sep and key in generated and not value.split("#", 1)[0].strip():
             out.append(f"{key}={generated[key]}")
             filled.append(key)
         else:
             out.append(line)
+    # A newer Jarvis may need a secret your older .env doesn't mention yet.
+    missing = [key for key in generated if key not in present]
+    if missing:
+        out += ["", "# --- Added by `make secrets` for a newer version of Jarvis ---"]
+        for key in missing:
+            out.append(f"{key}={generated[key]}")
+            filled.append(key)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
     return filled
@@ -157,6 +168,76 @@ def _fetch_text_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pull_speech_models(_: argparse.Namespace) -> int:
+    import httpx
+
+    from jarvis.config import get_settings
+    from jarvis.voice.config import VoiceConfigError, load_voice_config
+    from jarvis.voice.speech import SpeechClient, SpeechError
+
+    settings = get_settings()
+    try:
+        config = load_voice_config(settings.voice_config_path)
+    except VoiceConfigError as exc:
+        print(exc)
+        return 1
+    key = settings.speech_api_key.get_secret_value() if settings.speech_api_key else None
+
+    async def pull() -> None:
+        speech = SpeechClient(settings.speech_base_url, config.speech, api_key=key)
+        try:
+            for model in (config.speech.stt_model, config.speech.tts_model):
+                print(f"Downloading {model} (the first time can take a few minutes)...", flush=True)
+                await speech.pull(model)
+                print("  ready", flush=True)
+        finally:
+            await speech.aclose()
+
+    try:
+        asyncio.run(pull())
+    except SpeechError as exc:
+        print(exc)
+        return 1
+    except httpx.HTTPError as exc:
+        print(
+            f"Can't reach the speech server at {settings.speech_base_url} "
+            f"({type(exc).__name__}). Start it with `make up`."
+        )
+        return 1
+    return 0
+
+
+def _bench_voice(args: argparse.Namespace) -> int:
+    from jarvis.clock import SystemClock
+    from jarvis.config import get_settings
+    from jarvis.db.session import create_engine, create_session_factory
+    from jarvis.voice.bench import DEFAULT_AUDIO, BenchError, run_benchmark
+
+    settings = get_settings()
+
+    async def bench() -> bool:
+        engine = create_engine(settings.database_url)
+        try:
+            report = await run_benchmark(
+                create_session_factory(engine),
+                clock=SystemClock(),
+                url=args.url,
+                runs=args.runs,
+                question=Path(args.audio) if args.audio else DEFAULT_AUDIO,
+            )
+        finally:
+            await engine.dispose()
+        print(report.render())
+        return report.passed
+
+    print(f"Asking Jarvis a recorded question {args.runs} times over the voice socket...")
+    try:
+        return 0 if asyncio.run(bench()) else 1
+    except BenchError as exc:
+        print(exc)
+        return 1
+
+
 def _doctor(args: argparse.Namespace) -> int:
     from jarvis.doctor import run_doctor
 
@@ -187,6 +268,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_text.add_argument("--dest", default=os.environ.get("NLTK_DATA", "nltk_data"))
     p_text.set_defaults(func=_fetch_text_data)
+    sub.add_parser(
+        "pull-speech-models", help="download the speech models config/voice.yaml names"
+    ).set_defaults(func=_pull_speech_models)
+    p_bench = sub.add_parser("bench-voice", help="measure how fast Jarvis answers out loud")
+    p_bench.add_argument("--runs", type=int, default=5)
+    p_bench.add_argument("--url", default="ws://127.0.0.1:8080/api/voice/ws")
+    p_bench.add_argument("--audio", help="a 16 kHz mono WAV question (default: a recorded one)")
+    p_bench.set_defaults(func=_bench_voice)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

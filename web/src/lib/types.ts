@@ -217,7 +217,13 @@ export interface VoiceStatus {
   error?: string | null;
   /** Why live voice can't run right now, although it's configured. */
   problem?: string | null;
-  speech?: { reachable: boolean; stt_ready: boolean; tts_ready: boolean; detail: string };
+  speech?: {
+    reachable: boolean;
+    stt_ready: boolean;
+    tts_ready: boolean;
+    detail: string;
+    key_refused: boolean;
+  };
   voice?: string;
   stt_model?: string;
   language?: string;

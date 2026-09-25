@@ -63,15 +63,21 @@ function SpeechServer({ status }: { status: VoiceStatus }) {
       <span className="font-medium">Speech server</span>
       {ready ? (
         <Badge variant="success">ready</Badge>
+      ) : speech.key_refused ? (
+        <Badge variant="destructive">key refused</Badge>
       ) : speech.reachable ? (
         <Badge variant="warning">models missing</Badge>
       ) : (
-        <Badge variant="destructive">not reachable</Badge>
+        <Badge variant="destructive">not working</Badge>
       )}
       {!ready ? (
         <span className="w-full text-xs text-muted-foreground">
           {speech.detail}.{" "}
-          {speech.reachable ? (
+          {speech.key_refused ? (
+            <>
+              Run <code>make up</code> on the PC, so Jarvis and the speech server use the same key.
+            </>
+          ) : speech.reachable ? (
             <>
               Run <code>make pull-models</code> on the PC.
             </>

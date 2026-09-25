@@ -125,6 +125,11 @@ class Conversation(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+# The channel of the conversation `jarvis bench-voice` asks its questions in: a
+# measurement, so it's never mined for memories.
+BENCHMARK_CHANNEL = "benchmark"
+
+
 class ChatMessage(Base):
     """A display-level message (what the owner sees in the chat UI)."""
 
