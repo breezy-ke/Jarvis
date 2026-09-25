@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import stat
+from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -14,6 +16,7 @@ from jarvis import doctor
 from jarvis.cli import fill_env_file, generate_secrets, local_model_ids, main
 from jarvis.config import REPO_ROOT, Settings
 from jarvis.llm.config import parse_models_config
+from jarvis.voice.speech import SpeechStatus
 
 REPO_CONFIG = REPO_ROOT / "config"
 
@@ -49,6 +52,7 @@ def test_fill_env_file_copies_the_example_and_fills_only_blanks(tmp_path: Path) 
         "VAPID_PUBLIC_KEY=\n"
         "VAPID_PRIVATE_KEY=\n"
         "SEARXNG_SECRET=\n"
+        "SPEECH_API_KEY=\n"
         "GROQ_API_KEY=\n",
         encoding="utf-8",
     )
@@ -61,6 +65,7 @@ def test_fill_env_file_copies_the_example_and_fills_only_blanks(tmp_path: Path) 
             "VAPID_PUBLIC_KEY",
             "VAPID_PRIVATE_KEY",
             "SEARXNG_SECRET",
+            "SPEECH_API_KEY",
         ]
     )
     text = env.read_text(encoding="utf-8")
@@ -75,6 +80,24 @@ def test_fill_env_file_copies_the_example_and_fills_only_blanks(tmp_path: Path) 
         line.split("=", 1) for line in env.read_text(encoding="utf-8").splitlines() if "=" in line
     )
     assert second == first
+
+
+def test_an_older_env_gets_the_secrets_a_newer_jarvis_needs(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "JARVIS_SECRET_KEY=keep-me\nPOSTGRES_PASSWORD=mine\n# SPEECH_API_KEY=old-comment\n",
+        encoding="utf-8",
+    )
+    filled = fill_env_file(env)
+    text = env.read_text(encoding="utf-8")
+    assert "JARVIS_SECRET_KEY=keep-me\n" in text  # yours are never touched
+    assert "POSTGRES_PASSWORD=mine\n" in text
+    assert "SPEECH_API_KEY" in filled
+    added = dict(
+        line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#")
+    )
+    assert len(added["SPEECH_API_KEY"]) >= 40
+    assert fill_env_file(env) == []  # and only once
 
 
 def test_fill_env_file_needs_an_example(tmp_path: Path) -> None:
@@ -215,3 +238,144 @@ def test_task_fixes_name_only_what_that_task_may_use() -> None:
     assert "Ollama" not in public.fix  # the public task has no local candidate
     # Personal tasks fall back to the private local model, so they're usable.
     assert checks["Task 'chat' (personal)"].status == doctor.OK
+
+
+def test_bench_voice_explains_what_it_needs(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from jarvis.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        assert main(["bench-voice", "--runs", "0"]) == 1  # the default question, asked 0 times
+        assert "Ask at least once" in capsys.readouterr().out
+        assert main(["bench-voice", "--audio", str(tmp_path / "missing.wav")]) == 1
+        assert "Can't read" in capsys.readouterr().out
+    finally:
+        get_settings.cache_clear()
+
+
+# --- Voice and Telegram ------------------------------------------------------------------
+
+SPEECH_KEY = "k" * 43
+TELEGRAM_TOKEN = "123456789:" + "A" * 35
+
+
+class StubSpeech:
+    """Stands in for the doctor's SpeechClient: reports a fixed status."""
+
+    def __init__(self, status: SpeechStatus) -> None:
+        self._status = status
+        self.api_key: str | None = None
+
+    def __call__(self, base_url: str, config: object, *, api_key: str | None = None) -> StubSpeech:
+        self.api_key = api_key
+        return self
+
+    async def status(self) -> SpeechStatus:
+        return self._status
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("SPEECH_API_KEY", "TELEGRAM_BOT_TOKEN", "JARVIS_VOICE_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome", "fix"),
+    [
+        (SpeechStatus(True, True, True, "ready"), doctor.OK, ""),
+        (SpeechStatus(True, True, False, "not downloaded: kokoro"), doctor.WARN, "pull-models"),
+        (
+            SpeechStatus(True, False, False, "it refused SPEECH_API_KEY", key_refused=True),
+            doctor.FAIL,
+            "make up",
+        ),
+        (SpeechStatus(False, False, False, "unreachable (ConnectError)"), doctor.WARN, "make up"),
+    ],
+    ids=["ready", "models missing", "key refused", "down"],
+)
+async def test_doctor_checks_the_speech_server(
+    monkeypatch: pytest.MonkeyPatch, status: SpeechStatus, outcome: str, fix: str
+) -> None:
+    speech = StubSpeech(status)
+    monkeypatch.setattr(doctor, "SpeechClient", speech)
+    monkeypatch.setattr(doctor, "punkt_available", lambda: True)
+    settings = Settings(JARVIS_CONFIG_DIR=REPO_CONFIG, SPEECH_API_KEY=SPEECH_KEY)
+    checks = {c.title: c for c in await doctor.check_voice(settings)}
+    assert checks["voice.yaml"].status == doctor.OK
+    assert checks["Voice sentence data"].status == doctor.OK
+    assert "Speech server key" not in checks
+    server = checks.get("Speech server") or checks["Speech models"]
+    assert server.status == outcome
+    assert fix in server.fix
+    assert speech.api_key == SPEECH_KEY  # it asks with the key
+    assert SPEECH_KEY not in doctor.render(list(checks.values()))
+
+
+async def test_doctor_explains_missing_voice_pieces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(doctor, "SpeechClient", StubSpeech(SpeechStatus(True, True, True, "ok")))
+    monkeypatch.setattr(doctor, "punkt_available", lambda: False)
+    checks = {c.title: c for c in await doctor.check_voice(Settings(JARVIS_CONFIG_DIR=REPO_CONFIG))}
+    assert checks["Speech server key"].status == doctor.WARN
+    assert "make secrets" in checks["Speech server key"].fix
+    assert checks["Voice sentence data"].status == doctor.WARN
+    assert "fetch-text-data" in checks["Voice sentence data"].fix
+
+    broken = tmp_path / "voice.yaml"
+    broken.write_text("version: 1\nspeech: {}\n", encoding="utf-8")
+    settings = Settings(JARVIS_CONFIG_DIR=REPO_CONFIG, JARVIS_VOICE_FILE=broken)
+    [check] = await doctor.check_voice(settings)
+    assert (check.status, check.title) == (doctor.FAIL, "voice.yaml")
+
+
+def _telegram(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def test_doctor_checks_the_telegram_bot() -> None:
+    asked: list[str] = []
+
+    def get_me(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        return httpx.Response(200, json={"ok": True, "result": {"username": "jarvis_test_bot"}})
+
+    configured = Settings(TELEGRAM_BOT_TOKEN=TELEGRAM_TOKEN)
+    async with _telegram(get_me) as client:
+        unset = await doctor.check_telegram(Settings(), client, online=True)
+        offline = await doctor.check_telegram(configured, client, online=False)
+        assert asked == []  # neither asks Telegram anything
+        online = await doctor.check_telegram(configured, client, online=True)
+        malformed = await doctor.check_telegram(
+            Settings(TELEGRAM_BOT_TOKEN="not-a-token"), client, online=True
+        )
+    assert (unset.status, offline.status, online.status) == (doctor.OK, doctor.OK, doctor.OK)
+    assert "not set up" in unset.detail
+    assert "ONLINE=1" in offline.detail
+    assert "@jarvis_test_bot" in online.detail
+    assert asked == [f"/bot{TELEGRAM_TOKEN}/getMe"]
+    assert malformed.status == doctor.FAIL
+    assert "@BotFather" in malformed.fix
+
+
+async def test_doctor_reports_telegram_problems_without_showing_the_token() -> None:
+    def unauthorized(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"no route to {request.url}")
+
+    configured = Settings(TELEGRAM_BOT_TOKEN=TELEGRAM_TOKEN)
+    async with _telegram(unauthorized) as client:
+        rejected = await doctor.check_telegram(configured, client, online=True)
+    async with _telegram(offline) as client:
+        unreachable = await doctor.check_telegram(configured, client, online=True)
+    assert rejected.status == doctor.FAIL
+    assert unreachable.status == doctor.WARN
+    assert TELEGRAM_TOKEN.split(":")[1] not in doctor.render([rejected, unreachable])

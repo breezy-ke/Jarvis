@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from sqlalchemy import func, or_, select
 
-from jarvis.db.models import ChatMessage, Conversation
+from jarvis.db.models import BENCHMARK_CHANNEL, ChatMessage, Conversation
 from jarvis.db.session import transaction
 from jarvis.memory.store import FactInput, FactStatus, MemoryStoreError
 from jarvis.services import Services
@@ -170,6 +170,7 @@ async def extract_idle_conversations(
                     )
                 )
                 .where(Conversation.updated_at < now - idle_for)
+                .where(Conversation.channel != BENCHMARK_CHANNEL)
                 .order_by(func.coalesce(Conversation.memory_extracted_at, Conversation.created_at))
                 .limit(limit)
             )

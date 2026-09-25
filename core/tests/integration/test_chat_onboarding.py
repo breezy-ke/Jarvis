@@ -17,6 +17,7 @@ from jarvis.agents.extraction import (
 from jarvis.chat.service import ChatEvent, ChatService, ConversationNotFound
 from jarvis.clock import FrozenClock
 from jarvis.db.models import (
+    BENCHMARK_CHANNEL,
     ActionProposal,
     ChatMessage,
     Conversation,
@@ -184,6 +185,20 @@ async def test_idle_extraction_waits_for_quiet(services: Services, clock: Frozen
     assert extracted.memory_extracted_at is not None
     # Already extracted: nothing to do until the conversation changes again.
     assert await extract_idle_conversations(services, agent, idle_for=timedelta(0)) == 0
+
+
+async def test_benchmark_conversations_never_become_memories(
+    services: Services, clock: FrozenClock
+) -> None:
+    chat = ChatService(services)
+    await collect(chat.stream_reply("What is on my calendar today?", channel=BENCHMARK_CHANNEL))
+    clock.advance(minutes=11)
+    await extract_idle_conversations(services, build_extraction_agent())
+    async with services.session_factory() as session:
+        conversation = await session.scalar(select(Conversation))
+    assert conversation is not None
+    assert conversation.channel == BENCHMARK_CHANNEL
+    assert conversation.memory_extracted_at is None  # never even looked at
 
 
 # --- Onboarding ----------------------------------------------------------------------------

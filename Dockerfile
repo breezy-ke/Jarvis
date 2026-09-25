@@ -40,10 +40,17 @@ RUN mkdir -p /app/models /data \
      || echo "embedding model will download on first use") \
  && chown -R jarvis:jarvis /app/models /data
 
+# Sentence data for the voice pipeline (NLTK punkt_tab, checksum-pinned). Without
+# internet at build time, Jarvis downloads it once at startup instead.
+RUN (/app/core/.venv/bin/jarvis fetch-text-data --dest /app/nltk_data \
+     || echo "sentence data will download on first start") \
+ && mkdir -p /app/nltk_data && chown -R jarvis:jarvis /app/nltk_data
+
 ENV PATH="/app/core/.venv/bin:$PATH" \
     JARVIS_CONFIG_DIR=/app/config \
     JARVIS_WEB_DIST=/app/web/dist \
-    JARVIS_DATA_DIR=/data
+    JARVIS_DATA_DIR=/data \
+    NLTK_DATA=/app/nltk_data
 
 USER jarvis
 EXPOSE 8080

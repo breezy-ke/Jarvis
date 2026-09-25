@@ -53,6 +53,34 @@ services:
       - jarvisdata:/data
     networks: [internal, egress]
 
+  # Speech, on this PC: faster-whisper hears you, Kokoro speaks as Jarvis
+  # (speaches, OpenAI-compatible). compose.gpu.yml moves it to the NVIDIA GPU.
+  # Its models download once, with `make pull-models`.
+  speech:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      API_KEY: ${SPEECH_API_KEY:?Run `make secrets` first}
+      ENABLE_UI: "false"
+      LOG_LEVEL: warning # its debug logs would include what was said
+      WHISPER__TTL: "-1" # keep speech-to-text loaded, so replies never wait for it
+      WHISPER__COMPUTE_TYPE: int8
+    volumes:
+      - speech-models:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,sys,urllib.request as u; r=u.Request('http://127.0.0.1:8000/health', headers={'Authorization': 'Bearer ' + os.environ['API_KEY']}); sys.exit(0 if u.urlopen(r, timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    # No published port: only Jarvis talks to it. `egress` lets it download models.
+    networks: [internal, egress]
+
   ollama:
     image: ollama/ollama:0.34.4
     restart: unless-stopped
@@ -96,6 +124,7 @@ volumes:
   jarvisdata:
   ollama:
   phoenix:
+  speech-models:
 
 networks:
   internal:

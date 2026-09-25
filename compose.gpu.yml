@@ -1,6 +1,19 @@
-# Adds your NVIDIA GPU to Ollama (local AI). Used by `make up`.
+# Adds your NVIDIA GPU to Ollama (local AI) and the speech server. Used by `make up`.
 services:
   ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  speech:
+    # CUDA 12.6 build: needs an NVIDIA driver from 560 or later (make doctor checks).
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.6.3
+    environment:
+      WHISPER__COMPUTE_TYPE: int8_float16 # about 1 GB of VRAM for large-v3-turbo
     deploy:
       resources:
         reservations:

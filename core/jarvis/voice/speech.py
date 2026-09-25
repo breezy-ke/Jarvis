@@ -26,6 +26,7 @@ class SpeechStatus:
     stt_ready: bool
     tts_ready: bool
     detail: str = ""
+    key_refused: bool = False  # it's up, but won't take Jarvis's SPEECH_API_KEY
 
 
 class SpeechClient:
@@ -120,6 +121,13 @@ class SpeechClient:
     async def status(self) -> SpeechStatus:
         try:
             models = await self.downloaded_models()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code in (401, 403):
+                return SpeechStatus(
+                    True, False, False, "it refused SPEECH_API_KEY", key_refused=True
+                )
+            return SpeechStatus(False, False, False, f"it answered with error {code}")
         except (httpx.HTTPError, ValueError) as exc:
             return SpeechStatus(False, False, False, f"unreachable ({type(exc).__name__})")
         stt, tts = self.config.stt_model in models, self.config.tts_model in models

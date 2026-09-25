@@ -60,6 +60,7 @@ async def voice_status(owner: Owner, state: State) -> dict[str, Any]:
             "stt_ready": speech.stt_ready,
             "tts_ready": speech.tts_ready,
             "detail": speech.detail,
+            "key_refused": speech.key_refused,
         },
         "voice": voice.config.speech.voice,
         "stt_model": voice.config.speech.stt_model,

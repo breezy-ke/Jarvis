@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -17,6 +18,9 @@ from jarvis.config import Settings, get_settings
 from jarvis.llm.config import ModelsConfig, PrivacyClass, load_models_config
 from jarvis.llm.privacy import allowed
 from jarvis.policy.config import load_policies
+from jarvis.voice.config import VoiceConfigError, load_voice_config
+from jarvis.voice.speech import SpeechClient
+from jarvis.voice.textdata import punkt_available
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 _ICONS = {OK: "✔", WARN: "⚠", FAIL: "✘"}
@@ -279,6 +283,97 @@ async def check_ollama(
     return checks
 
 
+async def check_voice(settings: Settings) -> list[Check]:
+    """voice.yaml, the speech server and its models, and the sentence data."""
+    try:
+        config = load_voice_config(settings.voice_config_path)
+    except VoiceConfigError as exc:
+        fix = "Fix config/voice.yaml; voice stays off until then."
+        return [Check(FAIL, "voice.yaml", str(exc), fix)]
+    speech_config = config.speech
+    checks = [
+        Check(OK, "voice.yaml", f"voice {speech_config.voice}, hears {speech_config.language}")
+    ]
+    key = settings.speech_api_key.get_secret_value() if settings.speech_api_key else None
+    if not key:
+        checks.append(
+            Check(WARN, "Speech server key", "SPEECH_API_KEY is empty", "Run `make secrets`.")
+        )
+    speech = SpeechClient(settings.speech_base_url, config.speech, api_key=key)
+    try:
+        status = await speech.status()
+    finally:
+        await speech.aclose()
+    if status.key_refused:
+        checks.append(
+            Check(
+                FAIL,
+                "Speech server",
+                status.detail,
+                "Run `make up`, so Jarvis and the speech server both use the key in .env.",
+            )
+        )
+    elif not status.reachable:
+        checks.append(
+            Check(
+                WARN,
+                "Speech server",
+                f"not working at {settings.speech_base_url}: {status.detail}",
+                "Start it with `make up`; if it stays down: `make logs SERVICE=speech`.",
+            )
+        )
+    elif not (status.stt_ready and status.tts_ready):
+        checks.append(
+            Check(WARN, "Speech models", status.detail, "Download them with `make pull-models`.")
+        )
+    else:
+        checks.append(Check(OK, "Speech server", "ready: hearing and speaking models downloaded"))
+    if punkt_available():
+        checks.append(Check(OK, "Voice sentence data", "installed"))
+    else:
+        checks.append(
+            Check(
+                WARN,
+                "Voice sentence data",
+                "missing (Jarvis tries to download it at startup)",
+                "Run `make update` with internet access, or `jarvis fetch-text-data`.",
+            )
+        )
+    return checks
+
+
+async def check_telegram(settings: Settings, client: httpx.AsyncClient, *, online: bool) -> Check:
+    token = (
+        settings.telegram_bot_token.get_secret_value().strip()
+        if settings.telegram_bot_token
+        else ""
+    )
+    if not token:
+        return Check(OK, "Telegram", "not set up (optional: see docs/setup.md)")
+    if not re.fullmatch(r"\d{5,}:[A-Za-z0-9_-]{30,}", token):
+        return Check(
+            FAIL,
+            "Telegram",
+            "TELEGRAM_BOT_TOKEN doesn't look like a bot token",
+            "Copy it again from @BotFather (it looks like 123456789:AA...), then `make restart`.",
+        )
+    if not online:
+        return Check(OK, "Telegram", "bot token set (ONLINE=1 tests it)")
+    try:
+        response = await client.post(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
+        body = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        return Check(WARN, "Telegram", f"network error: {type(exc).__name__}")
+    if not body.get("ok"):
+        return Check(
+            FAIL,
+            "Telegram",
+            "Telegram rejected the bot token",
+            "Check TELEGRAM_BOT_TOKEN in .env (from @BotFather), then `make restart`.",
+        )
+    return Check(OK, "Telegram", f"bot @{body['result'].get('username')} is valid")
+
+
 async def check_online(
     models: ModelsConfig, env: Mapping[str, str], client: httpx.AsyncClient
 ) -> list[Check]:
@@ -357,7 +452,9 @@ async def run_doctor(*, online: bool = False) -> int:
     config_checks, models = check_configs(settings)
     checks += config_checks
     checks.append(await check_database(settings))
+    checks += await check_voice(settings)
     async with httpx.AsyncClient() as client:
+        checks.append(await check_telegram(settings, client, online=online))
         checks += await check_ollama(settings, models, client)
         if models is not None:
             checks += check_privacy(models, settings.provider_env())

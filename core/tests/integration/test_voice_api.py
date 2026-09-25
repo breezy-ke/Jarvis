@@ -20,17 +20,18 @@ from typing import Any
 import pytest
 import uvicorn
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import func, select
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from jarvis.api.app import create_app
 from jarvis.api.deps import AppState
 from jarvis.clock import SystemClock
-from jarvis.db.models import ChatMessage, VoiceDevice
+from jarvis.db.models import AuditEvent, ChatMessage, Conversation, VoiceDevice
 from jarvis.db.session import SessionFactory, transaction
 from jarvis.memory.embeddings import HashEmbedder
 from jarvis.services import Services, build_services
+from jarvis.voice import bench
 from tests.conftest import fake_models_config, make_settings
 from tests.integration.api_helpers import Harness, login, register, step_up
 from tests.integration.fakes import FakeSpeech
@@ -115,6 +116,7 @@ async def test_voice_status(harness: Harness) -> None:
         "stt_ready": True,
         "tts_ready": True,
         "detail": "ready",
+        "key_refused": False,
     }
     assert status["voice"] == "bm_george"
     assert status["confirm_phrase"] == "confirm"
@@ -283,3 +285,56 @@ async def test_the_socket_refuses_strangers(live: LiveServer) -> None:
             await asyncio.wait_for(ws.recv(), timeout=5)
     assert closed.value.rcvd is not None
     assert closed.value.rcvd.code == 4401
+
+
+# --- The latency benchmark (make bench-voice) ------------------------------------------
+
+
+async def _leftovers(live: LiveServer) -> tuple[VoiceDevice | None, int, int, set[str]]:
+    async with live.services.session_factory() as session:
+        device = await session.scalar(select(VoiceDevice).where(VoiceDevice.name == bench.NAME))
+        conversations = await session.scalar(select(func.count()).select_from(Conversation))
+        messages = await session.scalar(select(func.count()).select_from(ChatMessage))
+        actors = await session.scalars(
+            select(AuditEvent.actor).where(AuditEvent.event_type.like("voice.device_%"))
+        )
+        return device, conversations or 0, messages or 0, set(actors)
+
+
+async def test_the_benchmark_times_each_turn_then_cleans_up(live: LiveServer) -> None:
+    live.state.voice.speech = FakeSpeech("What is on my calendar today?")  # type: ignore[assignment]
+    report = await bench.run_benchmark(
+        live.services.session_factory, clock=SystemClock(), url=live.url, runs=2
+    )
+    assert len(report.turns) == 2
+    for turn in report.turns:
+        assert turn.finished
+        assert not turn.cut_off
+        assert turn.heard is not None
+        assert turn.answered is not None
+        assert turn.speaking is not None
+        assert 0 < turn.heard <= turn.answered <= turn.speaking
+    assert report.render().startswith("2 turns")
+    device, conversations, messages, actors = await _leftovers(live)
+    assert device is not None
+    assert device.revoked_at is not None  # its token no longer opens the socket
+    assert (conversations, messages) == (0, 0)  # nothing left in your chats
+    assert actors == {"benchmark"}  # the audit log says who added and removed it
+
+
+async def test_the_benchmark_explains_a_busy_socket_and_still_cleans_up(
+    live: LiveServer,
+) -> None:
+    live.state.voice.speech = FakeSpeech("")  # type: ignore[assignment]
+    live.state.voice.max_sessions = 1
+    token = await _device_token(live)
+    async with connect(live.url, additional_headers={"Authorization": f"Bearer {token}"}) as ws:
+        await _collect(ws, lambda ev: ev[-1]["type"] == "ready", seconds=10)  # already talking
+        with pytest.raises(bench.BenchError, match="4429"):
+            await bench.run_benchmark(
+                live.services.session_factory, clock=SystemClock(), url=live.url, runs=1
+            )
+    device, conversations, _, _ = await _leftovers(live)
+    assert device is not None
+    assert device.revoked_at is not None
+    assert conversations == 0

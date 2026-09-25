@@ -37,6 +37,11 @@ fi
 vram=$(scripts/wsl/detect-gpu.sh --vram)
 if [[ "$(scripts/wsl/detect-gpu.sh)" == "1" ]]; then
   ok "NVIDIA GPU available to containers (${vram} GB VRAM)"
+  driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | tr -d '[:space:]')
+  if [[ "$driver" =~ ^[0-9]+ ]] && ((${driver%%.*} < 560)); then
+    warn "NVIDIA driver $driver is older than 560: the speech server's GPU build won't start" \
+      "update the NVIDIA driver on Windows, then run 'wsl --shutdown'"
+  fi
 elif [[ -n "$vram" ]]; then
   fail "found a GPU (${vram} GB) but Docker can't use it" "sudo scripts/wsl/bootstrap.sh (installs the NVIDIA Container Toolkit)"
 else
