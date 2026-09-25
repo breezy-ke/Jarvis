@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
+from jarvis_satellite import session
 from jarvis_satellite.config import Settings
 from jarvis_satellite.pairing import MemoryStore
+from jarvis_satellite.protocol import INTERRUPT
 from jarvis_satellite.session import Satellite, _Call
 from tests.conftest import (
     SILENCE,
@@ -22,6 +26,7 @@ from tests.conftest import (
     FakeMic,
     FakeSpeaker,
     FakeWake,
+    ScriptedJarvis,
     eventually,
 )
 
@@ -36,17 +41,41 @@ class Rig:
     task: asyncio.Task[None]
 
 
-@pytest.fixture
-async def rig(settings: Settings, tokens: MemoryStore) -> AsyncIterator[Rig]:
-    mic, speaker, wake, indicator = FakeMic(), FakeSpeaker(), FakeWake(), FakeIndicator()
+@contextlib.asynccontextmanager
+async def running(
+    settings: Settings, tokens: MemoryStore, *, mic: FakeMic | None = None, **options: Any
+) -> AsyncIterator[Rig]:
+    """A satellite, listening (its task starts at the test's first await)."""
+    mic = mic or FakeMic()
+    speaker, wake, indicator = FakeSpeaker(), FakeWake(), FakeIndicator()
     satellite = Satellite(
-        settings, tokens=tokens, mic=mic, speaker=speaker, wake=wake, indicator=indicator
+        settings, tokens=tokens, mic=mic, speaker=speaker, wake=wake, indicator=indicator, **options
     )
     task = asyncio.create_task(satellite.run())
     yield Rig(satellite, mic, speaker, wake, indicator, task)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.fixture
+async def rig(settings: Settings, tokens: MemoryStore) -> AsyncIterator[Rig]:
+    async with running(settings, tokens) as rig:
+        yield rig
+
+
+@pytest.fixture
+def scripted() -> ScriptedJarvis:
+    return ScriptedJarvis()
+
+
+@pytest.fixture
+def paired() -> tuple[Settings, MemoryStore]:
+    """Settings and a token, for a satellite whose Jarvis is a ScriptedJarvis."""
+    settings = Settings(server="http://jarvis.test", follow_up_seconds=0.4, confirm_seconds=1.5)
+    store = MemoryStore()
+    store.set(settings.server, TOKEN)
+    return settings, store
 
 
 async def test_nothing_leaves_the_pc_before_the_wake_word(rig: Rig, jarvis: FakeJarvis) -> None:
@@ -129,6 +158,67 @@ async def test_mute_hangs_up_and_ignores_the_microphone(rig: Rig, jarvis: FakeJa
     rig.satellite.set_muted(False)
     rig.mic.say(WAKE)
     await eventually(lambda: jarvis.connections == 2)
+
+
+async def test_news_from_jarvis_after_muting_doesnt_undo_it(
+    paired: tuple[Settings, MemoryStore], scripted: ScriptedJarvis
+) -> None:
+    async with running(*paired, connector=scripted) as rig:
+        rig.mic.say(WAKE)
+        await eventually(lambda: scripted.connections == 1)
+        rig.mic.say(SPEECH, 3)  # "Hey Jarvis, what's…", kept while it connects
+        # Jarvis's greeting is already on its way when the owner mutes:
+        scripted.event(type="ready", input_rate=16000, output_rate=24000)
+        scripted.event(type="state", state="idle")
+        scripted.event(type="error", message="The speech server hiccuped.")
+        rig.satellite.set_muted(True)
+        await eventually(lambda: rig.wake.resets == 1)  # the call is over
+        assert scripted.closed
+        assert rig.indicator.last == ("muted", None)  # and the tray's Mute stays ticked
+        assert scripted.sent == []  # what was kept while connecting wasn't sent after all
+
+
+async def test_after_muting_not_one_more_frame_is_sent(
+    paired: tuple[Settings, MemoryStore], scripted: ScriptedJarvis
+) -> None:
+    async with running(*paired, connector=scripted) as rig:
+        rig.mic.say(WAKE)
+        await eventually(lambda: scripted.connections == 1)
+        scripted.event(type="ready", input_rate=16000, output_rate=24000)
+        scripted.event(type="state", state="idle")
+        rig.mic.say(SPEECH, 2)
+        await eventually(lambda: len(scripted.sent) == 2)
+        scripted.event(type="state", state="speaking")
+        await eventually(lambda: rig.indicator.last == ("speaking", None))
+        rig.satellite.set_muted(True)
+        rig.mic.say(WAKE)  # "Hey Jarvis" just after muting doesn't interrupt Jarvis...
+        rig.mic.say(SPEECH, 2)  # ...and nothing else is heard either
+        await eventually(lambda: rig.wake.resets == 1)
+        await eventually(rig.mic.queue.empty)
+        assert scripted.sent[2:] == []
+        assert INTERRUPT not in scripted.sent
+        assert rig.indicator.last == ("muted", None)
+
+
+async def test_a_microphone_problem_clears_once_it_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session, "MIC_RETRY_SECONDS", 0.05)
+    async with running(Settings(), MemoryStore(), mic=FakeMic(missing=1)) as rig:
+        await eventually(lambda: rig.indicator.last[0] == "error")
+        assert "microphone" in (rig.indicator.last[1] or "")
+        rig.mic.say(SILENCE)  # plugged in: it opens on the next try
+        await eventually(lambda: rig.indicator.last == ("sleeping", None))
+
+
+async def test_while_muted_the_tray_says_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session, "MIC_RETRY_SECONDS", 0.05)
+    async with running(Settings(), MemoryStore(), mic=FakeMic(missing=1)) as rig:
+        rig.satellite.set_muted(True)
+        rig.mic.say(SILENCE)
+        await eventually(lambda: rig.mic.missing == 0 and rig.mic.queue.empty())
+        await asyncio.sleep(0.05)
+        assert set(rig.indicator.names) == {"muted"}  # no microphone problem, no "sleeping"
+        rig.satellite.set_muted(False)
+        assert rig.indicator.last == ("sleeping", None)
 
 
 async def test_a_revoked_token_says_pair_again(
