@@ -27,10 +27,17 @@ from jarvis.security.scanners import iter_strings, scan_payload
 class KnownContacts(Protocol):
     async def is_known(self, session: AsyncSession, address: str) -> bool: ...
 
+    async def thread_participants(self, session: AsyncSession, thread_id: str) -> set[str]:
+        """Addresses already on an email conversation (for replies)."""
+        ...
+
 
 class NoKnownContacts:
     async def is_known(self, session: AsyncSession, address: str) -> bool:
         return False
+
+    async def thread_participants(self, session: AsyncSession, thread_id: str) -> set[str]:
+        return set()
 
 
 @dataclass
@@ -106,7 +113,7 @@ async def secrets_scan(ctx: ValidationContext) -> ValidationResult:
     return ValidationResult("secrets_scan", "pass", "No secrets found")
 
 
-def _link_problems(urls: Iterable[str]) -> tuple[list[str], list[str]]:
+def link_problems(urls: Iterable[str]) -> tuple[list[str], list[str]]:
     blocks: list[str] = []
     warns: list[str] = []
     for url in urls:
@@ -132,7 +139,7 @@ def _link_problems(urls: Iterable[str]) -> tuple[list[str], list[str]]:
 
 async def links_safe(ctx: ValidationContext) -> ValidationResult:
     urls = [m.group(1) for _, text in iter_strings(ctx.payload) for m in _URL_RE.finditer(text)]
-    blocks, warns = _link_problems(urls)
+    blocks, warns = link_problems(urls)
     if blocks:
         return ValidationResult("links_safe", "block", "; ".join(sorted(set(blocks))))
     if warns:
@@ -149,7 +156,17 @@ async def recipients_known(ctx: ValidationContext) -> ValidationResult:
         return ValidationResult(
             "recipients_known", "block", f"Invalid address(es): {', '.join(invalid)}"
         )
-    unknown = [a for a in addresses if not await ctx.contacts.is_known(ctx.session, a)]
+    thread_id = ctx.payload.get("thread_id")
+    on_thread = (
+        await ctx.contacts.thread_participants(ctx.session, thread_id)
+        if isinstance(thread_id, str) and thread_id
+        else set()
+    )
+    unknown = [
+        a
+        for a in addresses
+        if a not in on_thread and not await ctx.contacts.is_known(ctx.session, a)
+    ]
     notes: list[str] = []
     if unknown:
         notes.append(f"New recipient(s), check carefully: {', '.join(sorted(set(unknown)))}")
@@ -157,7 +174,9 @@ async def recipients_known(ctx: ValidationContext) -> ValidationResult:
         notes.append("Uses BCC")
     if notes:
         return ValidationResult("recipients_known", "warn", "; ".join(notes))
-    return ValidationResult("recipients_known", "pass", "All recipients are known contacts")
+    return ValidationResult(
+        "recipients_known", "pass", "Everyone is a known contact or already on the conversation"
+    )
 
 
 async def attachment_mentioned(ctx: ValidationContext) -> ValidationResult:

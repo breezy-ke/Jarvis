@@ -16,6 +16,7 @@ from jarvis.agents.tools import AgentDeps
 from jarvis.db.models import ActionProposal, ChatMessage, Conversation, ConversationTurn
 from jarvis.db.session import transaction
 from jarvis.llm.router import RouterError, StreamDone, TextDelta
+from jarvis.mail.service import MailService
 from jarvis.memory.retrieval import render_facts, search_facts
 from jarvis.policy.state import get_kill_switch
 from jarvis.policy.types import Status
@@ -70,9 +71,16 @@ class ConversationNotFound(LookupError):
 
 
 class ChatService:
-    def __init__(self, services: Services, *, agent: Agent[AgentDeps, str] | None = None) -> None:
+    def __init__(
+        self,
+        services: Services,
+        *,
+        agent: Agent[AgentDeps, str] | None = None,
+        mail: MailService | None = None,
+    ) -> None:
         self._s = services
         self.agent = agent or build_orchestrator(services.persona)
+        self.mail = mail
 
     async def create_conversation(
         self, *, channel: str = "pwa", title: str | None = None
@@ -197,6 +205,7 @@ class ChatService:
             actor="agent:jarvis",
             conversation_id=conversation_id,
             redact_sensitive=redact,
+            mail=self.mail,
         )
         chunks: list[str] = []
         try:

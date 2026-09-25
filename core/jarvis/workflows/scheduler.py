@@ -5,7 +5,8 @@
   lives in the policy engine's tables, so a restart loses nothing.
 * **Scheduled jobs** use DBOS on the same Postgres. Schedules follow your
   local timezone, and DBOS records each run, so a job interrupted by a power
-  cut is resumed when Jarvis comes back.
+  cut is resumed when Jarvis comes back. They include the inbox digests (at
+  the times in email.yaml) and, nightly, forgetting old email text.
 """
 
 from __future__ import annotations
@@ -14,18 +15,23 @@ import asyncio
 import contextlib
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete
 
 from jarvis.agents.extraction import build_extraction_agent, extract_idle_conversations
 from jarvis.db.models import AuthChallenge, AuthSession, OAuthPending
 from jarvis.db.session import transaction
+from jarvis.mail.digest import digest_kind
 from jarvis.services import Services
+
+if TYPE_CHECKING:
+    from jarvis.mail.service import MailService
 
 log = logging.getLogger("jarvis.scheduler")
 
 _services: Services | None = None
+_mail: MailService | None = None
 
 
 def _svc() -> Services:
@@ -60,7 +66,14 @@ async def run_nightly_maintenance() -> dict[str, int]:
     services = _svc()
     async with transaction(services.session_factory) as session:
         purged = await services.memory.purge_forgotten(session, older_than=timedelta(days=7))
-    return {"purged_facts": purged}
+    bodies = await _mail.purge_old_bodies() if _mail is not None else 0
+    return {"purged_facts": purged, "purged_email_bodies": bodies}
+
+
+async def run_mail_digest(kind: str, scheduled_for: datetime) -> bool:
+    if _mail is None:
+        return False
+    return await _mail.alerts.send_digest(kind, scheduled_for=scheduled_for) is not None
 
 
 async def executor_loop(services: Services, stop: asyncio.Event, *, interval: float = 2.0) -> None:
@@ -76,15 +89,17 @@ async def executor_loop(services: Services, stop: asyncio.Event, *, interval: fl
 class Scheduler:
     """Owns the DBOS runtime and the scheduled jobs."""
 
-    def __init__(self, services: Services) -> None:
+    def __init__(self, services: Services, *, mail: MailService | None = None) -> None:
         self._services = services
+        self._mail = mail
         self._started = False
 
     async def start(self) -> None:
-        global _services
-        from dbos import DBOS, DBOSConfig
+        global _services, _mail
+        from dbos import DBOS, DBOSConfig, ScheduleInput
 
         _services = self._services
+        _mail = self._mail
         config: DBOSConfig = {
             "name": "jarvis",
             "system_database_url": self._services.settings.sync_database_url,
@@ -104,10 +119,31 @@ class Scheduler:
         async def nightly_maintenance_job(scheduled_time: datetime, context: Any) -> None:
             await DBOS.run_step_async({"name": "maintenance"}, run_nightly_maintenance)
 
+        @DBOS.workflow(name="mail_digest_job")
+        async def mail_digest_job(scheduled_time: datetime, context: Any) -> None:
+            await DBOS.run_step_async(
+                {"name": "digest"}, run_mail_digest, str(context), scheduled_time
+            )
+
         DBOS.launch()
         tz = self._services.policies_config.defaults.timezone
+        digests: list[ScheduleInput] = []
+        if self._mail is not None:
+            for moment in self._mail.config.digests.clock_times:
+                digests.append(
+                    {
+                        "schedule_name": f"mail-digest-{moment:%H%M}",
+                        "workflow_fn": mail_digest_job,
+                        "schedule": f"{moment.minute} {moment.hour} * * *",
+                        "context": digest_kind(moment),
+                        "automatic_backfill": True,  # a late digest is sent, a stale one skipped
+                        "cron_timezone": tz,
+                        "queue_name": None,
+                    }
+                )
         await DBOS.apply_schedules_async(
             [
+                *digests,
                 {
                     "schedule_name": "memory-extraction",
                     "workflow_fn": memory_extraction_job,

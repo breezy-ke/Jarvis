@@ -37,6 +37,7 @@ from jarvis.chat.service import ChatService
 from jarvis.config import Settings
 from jarvis.db.models import ActionProposal, Conversation, SystemState, TelegramNotice
 from jarvis.db.session import transaction
+from jarvis.mail.preview import email_preview
 from jarvis.policy.engine import PolicyError
 from jarvis.policy.state import get_kill_switch, is_stand_down, set_kill_switch
 from jarvis.policy.types import Channel, Risk, Status
@@ -708,11 +709,16 @@ class TelegramBot:
     # --- Approvals ----------------------------------------------------------------------
 
     def _quiet_now(self) -> bool:
-        quiet = self._s.policies_config.defaults.quiet_hours
-        if quiet is None:
+        return self._s.policies_config.quiet_at(self._s.clock.now())
+
+    async def tell_owner(self, text: str, *, silent: bool = False) -> bool:
+        """A note straight to you (an alert or a digest). False if Telegram isn't linked."""
+        owner = await self.owner()
+        if owner is None:
             return False
-        local = self._s.clock.now().astimezone(self._s.policies_config.tz)
-        return quiet.contains(local.time())
+        clean, _ = redact_text(text, placeholder=HIDDEN)
+        await self.api.send_message(owner.chat_id, clean[:MAX_MESSAGE_CHARS], silent=silent)
+        return True
 
     def render(self, proposal: ActionProposal) -> tuple[str, list[list[dict[str, str]]] | None]:
         """The approval message for `proposal` in its current state, and its buttons."""
@@ -749,6 +755,14 @@ class TelegramBot:
         else:
             header = f"🚫 <b>Not allowed</b>: {_escape(proposal.status_reason, 200)}"
         lines = [header, "", f"<b>{_escape(proposal.summary, 300)}</b>"]
+        preview = email_preview(proposal.kind, proposal.payload)
+        if preview is not None:
+            for label, addresses in (("To", preview.to), ("Cc", preview.cc), ("Bcc", preview.bcc)):
+                if addresses:
+                    lines.append(f"<b>{label}:</b> {_escape(', '.join(addresses), 300)}")
+            lines.append(f"<b>Subject:</b> {_escape(preview.subject, 200)}")
+            if preview.first_line:
+                lines.append(f"<i>“{_escape(preview.first_line, 200)}”</i>")
         if proposal.rationale:
             lines.append(f"<i>Why:</i> {_escape(proposal.rationale, 300)}")
         buttons: list[list[dict[str, str]]] = []

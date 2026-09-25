@@ -557,6 +557,19 @@ async def test_approval_requests_are_silent_in_quiet_hours(
     assert telegram.sent[-1].silent
 
 
+async def test_alerts_and_digests_reach_you_with_secrets_masked(
+    bot: TelegramBot, telegram: FakeTelegram, updates: Updates
+) -> None:
+    assert not await bot.tell_owner("Urgent: the door code is 4471")  # not linked yet
+    await link(bot, updates)
+    before = len(telegram.sent)
+    assert await bot.tell_owner("📧 Urgent: the new key is AKIAABCDEFGHIJKLMNOP", silent=True)
+    [note] = telegram.sent[before:]
+    assert note.chat_id == CHAT
+    assert note.silent
+    assert note.text == "📧 Urgent: the new key is [hidden: see the app]"
+
+
 async def test_the_app_link_is_dropped_if_telegram_refuses_it(
     bot: TelegramBot, telegram: FakeTelegram, updates: Updates, services: Services
 ) -> None:

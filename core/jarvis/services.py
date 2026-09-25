@@ -11,6 +11,7 @@ from jarvis.config import Settings
 from jarvis.db.session import SessionFactory
 from jarvis.llm.config import ModelsConfig, load_models_config
 from jarvis.llm.router import ModelRouter
+from jarvis.mail.contacts import MailContacts
 from jarvis.memory.embeddings import Embedder, create_embedder
 from jarvis.memory.store import MemoryStore
 from jarvis.notify.push import PushService
@@ -87,7 +88,7 @@ def build_services(
         audit=audit,
         clock=clock,
         gate=profiles,
-        contacts=profiles,
+        contacts=MailContacts(profiles),
     )
     return Services(
         settings=settings,

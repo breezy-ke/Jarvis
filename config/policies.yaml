@@ -51,7 +51,8 @@ action_kinds:
     autonomy: L3
     risk: low
     undo_window_seconds: 0
-    validators: [secrets_scan]
+    # A draft to someone who isn't a contact or on the conversation waits for you.
+    validators: [recipients_known, secrets_scan]
   email.send:
     description: Send an email or a reply from your Gmail.
     autonomy: L2

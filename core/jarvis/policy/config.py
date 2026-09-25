@@ -128,6 +128,11 @@ class PoliciesConfig(BaseModel):
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.defaults.timezone)
 
+    def quiet_at(self, moment: datetime) -> bool:
+        """Whether `moment` falls in your quiet hours, in your timezone."""
+        quiet = self.defaults.quiet_hours
+        return quiet is not None and quiet.contains(moment.astimezone(self.tz).time())
+
     def undo_window(self, kind: str) -> int:
         policy = self.action_kinds[kind]
         if policy.undo_window_seconds is not None:

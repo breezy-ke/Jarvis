@@ -96,11 +96,17 @@ def policies(**overrides: Any) -> PoliciesConfig:
 
 
 class SetContacts:
-    def __init__(self, known: set[str] | None = None) -> None:
+    def __init__(
+        self, known: set[str] | None = None, threads: dict[str, set[str]] | None = None
+    ) -> None:
         self.known = {k.lower() for k in (known or set())}
+        self.threads = threads or {}
 
     async def is_known(self, session: AsyncSession, address: str) -> bool:
         return address.lower() in self.known
+
+    async def thread_participants(self, session: AsyncSession, thread_id: str) -> set[str]:
+        return self.threads.get(thread_id, set())
 
 
 def build_engine(

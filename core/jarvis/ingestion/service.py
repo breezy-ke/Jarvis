@@ -246,7 +246,9 @@ class IngestionService:
         if source == "gmail_style":
             async with transaction(self._s.session_factory) as session:
                 token = await self.google.access_token(session)
-            bodies = await google.fetch_sent_bodies(self._http, token, limit=200)
+            bodies = await google.fetch_sent_bodies(
+                self._http, token, limit=200, gmail=self.google.endpoints.gmail
+            )
             profile = style.analyze(bodies)
             return style.to_suggestions(profile), {"emails_analyzed": profile.emails_analyzed}
         if source == "calendar":
@@ -254,7 +256,11 @@ class IngestionService:
                 token = await self.google.access_token(session)
             now = self._s.clock.now()
             events = await google.fetch_calendar_events(
-                self._http, token, start=now - timedelta(days=60), end=now
+                self._http,
+                token,
+                start=now - timedelta(days=60),
+                end=now,
+                calendar=self.google.endpoints.calendar,
             )
             return google.calendar_suggestions(events, self._s.policies_config.tz), {
                 "events": len(events)

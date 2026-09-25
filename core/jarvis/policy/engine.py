@@ -366,6 +366,64 @@ class PolicyEngine:
         )
         return proposal
 
+    async def withdraw(
+        self,
+        session: AsyncSession,
+        proposal_id: uuid.UUID,
+        *,
+        reason: str,
+        actor: str = "system",
+    ) -> bool:
+        """Take back a proposal nobody has decided on yet (replaced, or no longer needed).
+
+        Returns False if it was already decided: an approval is never undone here.
+        """
+        proposal = await session.get(ActionProposal, proposal_id, with_for_update=True)
+        if proposal is None or proposal.status not in (Status.PENDING, Status.DRAFT_ONLY):
+            return False
+        proposal.status = Status.CANCELLED
+        proposal.status_reason = reason
+        await self._audit.append(
+            session,
+            actor=actor,
+            event_type="action.withdrawn",
+            subject_type="action",
+            subject_id=str(proposal.id),
+            summary=f"Withdrew {proposal.kind}: {reason}"[:300],
+            data={"kind": proposal.kind},
+        )
+        return True
+
+    async def confirm_outcome(
+        self,
+        session: AsyncSession,
+        proposal_id: uuid.UUID,
+        *,
+        result: dict[str, Any],
+        evidence: str,
+    ) -> bool:
+        """An action whose outcome was unknown turned out to have happened.
+
+        Only `unknown_outcome` moves to `executed` here, with the evidence audited.
+        """
+        proposal = await session.get(ActionProposal, proposal_id, with_for_update=True)
+        if proposal is None or proposal.status != Status.UNKNOWN_OUTCOME:
+            return False
+        proposal.status = Status.EXECUTED
+        proposal.status_reason = f"Confirmed: {evidence}"
+        proposal.executed_at = self._clock.now()
+        proposal.result = result
+        await self._audit.append(
+            session,
+            actor="system",
+            event_type="action.confirmed",
+            subject_type="action",
+            subject_id=str(proposal.id),
+            summary=f"Confirmed {proposal.kind} happened: {evidence}"[:300],
+            data={"kind": proposal.kind},
+        )
+        return True
+
     # --- Executing ----------------------------------------------------------------
 
     async def execute_due(

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     web_dist_dir: Path | None = Field(default=None, alias="JARVIS_WEB_DIST")
     models_file: Path | None = Field(default=None, alias="JARVIS_MODELS_FILE")
     voice_file: Path | None = Field(default=None, alias="JARVIS_VOICE_FILE")
+    email_file: Path | None = Field(default=None, alias="JARVIS_EMAIL_FILE")
     allow_fake_llm: bool = Field(default=False, alias="JARVIS_ALLOW_FAKE_LLM")
     enable_scheduler: bool = Field(default=True, alias="JARVIS_ENABLE_SCHEDULER")
     auto_migrate: bool = Field(default=True, alias="JARVIS_AUTO_MIGRATE")
@@ -56,6 +57,9 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080/api/integrations/google/callback",
         alias="GOOGLE_OAUTH_REDIRECT_URI",
     )
+    # Tests only: send every Google request (sign-in, Gmail, Calendar) to a fake
+    # server at this address. Refused in production.
+    google_fake_base: str | None = Field(default=None, alias="JARVIS_GOOGLE_FAKE_BASE")
     github_token: SecretStr | None = Field(default=None, alias="GITHUB_TOKEN")
 
     vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
@@ -78,9 +82,19 @@ class Settings(BaseSettings):
             raise ValueError("JARVIS_PUBLIC_ORIGIN must look like https://host[:port]")
         return f"{parsed.scheme}://{parsed.netloc}"
 
+    @model_validator(mode="after")
+    def _no_fakes_in_production(self) -> Settings:
+        if self.google_fake_base and self.env == "production":
+            raise ValueError("JARVIS_GOOGLE_FAKE_BASE is for tests only")
+        return self
+
     @property
     def voice_config_path(self) -> Path:
         return self.voice_file or self.config_dir / "voice.yaml"
+
+    @property
+    def email_config_path(self) -> Path:
+        return self.email_file or self.config_dir / "email.yaml"
 
     @property
     def models_config_path(self) -> Path:
