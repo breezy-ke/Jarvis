@@ -15,7 +15,8 @@ cloud tiers), and it's reachable from your phone over private HTTPS.
 | **Safe by construction:** agents only *propose*; a policy engine decides; approvals are pinned to the exact payload; undo windows; kill switch; tamper-evident activity log | ✅ Phase 0 |
 | **Private by default:** every AI call is routed by data class, and personal data never reaches a provider that trains on it | ✅ Phase 0 |
 | **Your app:** installable on phone and desktop, passkey sign-in, push notifications, dark and light themes, accessible | ✅ Phase 0 |
-| **Voice:** "Hey Jarvis", talk and interrupt, spoken replies | Phase 2 |
+| **Voice:** talk to Jarvis in the app and interrupt it; "Hey Jarvis" on your PC; spoken replies; approve everyday actions by saying "confirm". Speech runs on your PC | ✅ Phase 2 |
+| **Telegram:** chat by text or voice note, and approve everyday actions with a tap | ✅ Phase 2 |
 | **Email:** triage, summaries, replies drafted in your style, sending with approval and a 60-second undo | Phase 3 |
 | **Daily tech brief and research**, with sources and "why it matters to you" | Phase 4 |
 | **Lead engine:** East African SMEs, international startups, tenders, agencies needing overflow | Phase 5 |
@@ -31,6 +32,8 @@ cloud tiers), and it's reachable from your phone over private HTTPS.
    your passkey.
 3. **Onboard:** do the interview. Jarvis stays in "talk and draft" mode until
    you sign off your profile.
+4. **Talk:** open the Talk page, or set up "Hey Jarvis" on the PC and Telegram
+   (setup steps 6 and 7).
 
 Day to day, run these in Ubuntu from `~/Jarvis`:
 
@@ -47,10 +50,12 @@ updates, backups, the kill switch, lost devices and troubleshooting.
 ## How it's built
 
 - **core:** Python (FastAPI, Pydantic AI, SQLAlchemy, DBOS) on Postgres with
-  pgvector.
+  pgvector. Voice uses Pipecat.
 - **web:** a React PWA (Vite, Tailwind CSS, Radix, TanStack).
-- **Deployment:** Docker Compose, with Ollama for local models and Phoenix for
-  local AI traces.
+- **satellite:** the "Hey Jarvis" Windows tray app (Python, openWakeWord).
+- **Deployment:** Docker Compose, with Ollama for local models, a local speech
+  server (speaches: faster-whisper and Kokoro), and Phoenix for local AI
+  traces.
 
 | Doc | For |
 |---|---|
@@ -66,7 +71,7 @@ You need Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22 with pnpm
 10, and Docker for the test database.
 
 ```bash
-make install    # Python and web dependencies
+make install    # Python (core and satellite) and web dependencies
 make dev-db     # throwaway Postgres + pgvector on 127.0.0.1:5432
 make check      # lint + types + unit/integration tests (what CI runs)
 make e2e        # browser end-to-end tests (Playwright)

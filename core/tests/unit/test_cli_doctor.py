@@ -326,7 +326,7 @@ async def test_doctor_explains_missing_voice_pieces(
     assert checks["Speech server key"].status == doctor.WARN
     assert "make secrets" in checks["Speech server key"].fix
     assert checks["Voice sentence data"].status == doctor.WARN
-    assert "fetch-text-data" in checks["Voice sentence data"].fix
+    assert "make restart" in checks["Voice sentence data"].fix
 
     broken = tmp_path / "voice.yaml"
     broken.write_text("version: 1\nspeech: {}\n", encoding="utf-8")

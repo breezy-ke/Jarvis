@@ -1,34 +1,41 @@
 # Architecture
 
-Jarvis is a single-user assistant that runs on your own PC. It has two parts:
+Jarvis is a single-user assistant that runs on your own PC. It has these
+parts:
 
-- **core**: a Python API that holds the agents, memory, policy engine and
-  model router.
+- **core**: a Python API that holds the agents, memory, policy engine, model
+  router, voice pipeline and Telegram bot.
 - **web**: a React app (PWA) served by the core.
+- **speech**: a local speech server that hears (faster-whisper) and speaks
+  (Kokoro), used only by the core.
+- **satellite** (optional): a Windows tray app that listens for "Hey Jarvis".
 
 Everything stateful lives in one Postgres database.
 
 ```
   Phone / laptop browser (PWA)                       Windows PC
-          │  HTTPS over Tailscale (WireGuard)         ┌───────────────────────────────────────────┐
-          └──────────────────────────────────────────►│ tailscale serve :443 ─► 127.0.0.1:8080    │
-                                                      │                                           │
-                                                      │ WSL2 Ubuntu · Docker Engine (+GPU)        │
-                                                      │ ┌───────────────────────────────────────┐ │
-                                                      │ │ core (FastAPI, :8080)                 │ │
-                                                      │ │   API + built PWA + background work   │ │
-                                                      │ └──┬───────────────┬──────────────┬─────┘ │
-                                                      │    │ internal net  │              │       │
-                                                      │ ┌──▼──────────┐ ┌──▼─────────┐ ┌──▼─────┐ │
-                                                      │ │ postgres 17 │ │ ollama     │ │ phoenix│ │
-                                                      │ │ + pgvector  │ │ (GPU)      │ │ traces │ │
-                                                      │ └─────────────┘ └────────────┘ └────────┘ │
-                                                      └───────────────────────────────────────────┘
+          │  HTTPS and WebSocket over Tailscale       ┌─────────────────────────────────────────────────────────┐
+          └──────────────────────────────────────────►│ tailscale serve :443 ─► 127.0.0.1:8080                  │
+                                                      │ "Hey Jarvis" tray app (satellite) ─► 127.0.0.1:8080     │
+                                                      │                                                         │
+                                                      │ WSL2 Ubuntu · Docker Engine (+GPU)                      │
+                                                      │ ┌─────────────────────────────────────────────────────┐ │
+                                                      │ │ core (FastAPI, :8080)                               │ │
+                                                      │ │   API, PWA, voice, Telegram and background work     │ │
+                                                      │ └──┬────────────┬────────────┬────────────┬───────────┘ │
+                                                      │    │            │            │            │             │
+                                                      │ ┌──▼────────┐ ┌─▼────────┐ ┌─▼────────┐ ┌─▼────────┐    │
+                                                      │ │postgres 17│ │ ollama   │ │ speech   │ │ phoenix  │    │
+                                                      │ │+ pgvector │ │ (GPU)    │ │ (GPU)    │ │ traces   │    │
+                                                      │ └───────────┘ └──────────┘ └──────────┘ └──────────┘    │
+                                                      └─────────────────────────────────────────────────────────┘
    Cloud AI (only the data each is allowed): Groq · Gemini · OpenRouter · (paid, off by default)
+   Telegram (if you set it up): the core fetches your messages; nothing listens publicly
 ```
 
-- **Ports:** every port binds to `127.0.0.1`. Postgres has no published port
-  and sits on an `internal` Docker network with no internet access.
+- **Ports:** every port binds to `127.0.0.1`. Postgres and the speech server
+  have no published port. Postgres sits on an `internal` Docker network with
+  no internet access.
 - **Startup chain:** the Windows boot task keeps WSL alive. systemd starts
   Docker, then the `jarvis` service runs `make boot-up`.
 - **Crash recovery:** containers restart on failure, and durable workflows
@@ -65,6 +72,42 @@ agent ─► propose_action ─► validators ─► policy decision ─┬─�
                                      ─► executing (committed) ─► executed | failed | unknown_outcome
 ```
 
+**Voice** (`/api/voice/ws`, a WebSocket; `core/jarvis/voice/protocol.py`
+describes it):
+
+1. The Talk page, or the satellite, streams your microphone as 16 kHz PCM.
+   The app signs in with your session, and a satellite with its device token.
+2. The Pipecat pipeline in the core finds the end of what you said: Silero
+   voice-activity detection, then Smart Turn, which tells a finished sentence
+   from a pause.
+3. The speech server turns it into text.
+4. The voice brain hands the text to the same chat service as the app, in
+   voice mode: a fast model and short spoken answers, with the same memory,
+   tools and policy engine. If the answer is slow to start, Jarvis says a
+   short filler.
+5. The answer is spoken sentence by sentence (the speech server again) and
+   streamed back as 24 kHz PCM. JSON events carry the transcript and state
+   alongside the audio.
+6. Talking over Jarvis stops it at once. The part of the answer you heard is
+   saved.
+7. An action Jarvis just proposed is read back. An exact "confirm" or "cancel"
+   approves or rejects it (see [security.md](security.md), "Voice").
+
+```
+mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mode) ─► sentences ─► text-to-speech ─► speaker
+        ▲                                                                                                   │
+        └─────────────────────────── you talk over it: Jarvis stops and listens ◄───────────────────────────┘
+```
+
+**Telegram** (`core/jarvis/telegram/`):
+
+- The core long-polls Telegram's Bot API, so it needs no public address.
+- Messages from the linked owner go to the same chat service, with the privacy
+  rules for a channel that isn't end-to-end encrypted. Voice notes are
+  transcribed by the speech server and answered with a voice note.
+- Low- and medium-risk approvals arrive with buttons. Each message is kept in
+  step with decisions made elsewhere (`telegram_notices`).
+
 **Onboarding:** each of the 12 modules is a short interview run by an agent.
 
 - It may only write the profile fields of its own module, and every value is
@@ -97,10 +140,12 @@ agent ─► propose_action ─► validators ─► policy decision ─┬─�
 | `profile/` | The versioned profile schema, completeness, sign-off |
 | `onboarding/` | The 12 interview modules and their agent |
 | `ingestion/` | The consented sources, Google OAuth (PKCE, loopback redirect), style statistics |
-| `security/` | Encryption (Fernet), canonical hashing, secret scanners, untrusted-content handling |
+| `security/` | Encryption (Fernet), canonical hashing, secret scanners, untrusted-content handling, one-time pairing codes |
 | `notify/` | Web Push (VAPID) |
 | `workflows/` | The executor loop and the scheduled jobs (DBOS) |
-| `doctor.py`, `cli.py` | `jarvis doctor`, `secrets`, `setup-token`, `migrate`, `serve`, `local-models` |
+| `voice/` | The voice pipeline (Pipecat), the voice brain, voice confirmations, the speech server client, paired devices, the latency benchmark |
+| `telegram/` | The Telegram bot: the Bot API client, owner linking, message formatting, approval buttons |
+| `doctor.py`, `cli.py` | `jarvis doctor`, `secrets`, `setup-token`, `migrate`, `serve`, `local-models`, `fetch-text-data`, `pull-speech-models`, `bench-voice` |
 
 **Background work:**
 
@@ -111,6 +156,9 @@ agent ─► propose_action ─► validators ─► policy decision ─┬─�
     sessions/challenges
   - nightly maintenance at 03:00, which catches up if the PC was off: purges
     facts you asked to forget, after 7 days
+- The Telegram bot's long-poll loop, when a bot token is set.
+- At startup, voice checks for its sentence data and downloads it once if
+  it's missing.
 
 **Data** (Postgres, migrations in `core/alembic/`):
 
@@ -125,7 +173,9 @@ agent ─► propose_action ─► validators ─► policy decision ─┬─�
 | `webauthn_credentials`, `auth_sessions`, `auth_challenges`, `recovery_codes` | Sign-in |
 | `oauth_tokens` (encrypted), `oauth_pending`, `ingestion_sources` | Sources |
 | `push_subscriptions` | Notification endpoints |
-| `system_state` | The kill switch, the setup code hash, and similar |
+| `voice_devices` | Paired satellites: name, token hash, last seen, removed |
+| `telegram_notices` | The Telegram messages about approvals, so they stay in step with decisions |
+| `system_state` | The kill switch, the setup code hash, pairing codes, the Telegram link, and similar |
 
 DBOS keeps its workflow state in its own `dbos` schema in the same database.
 
@@ -137,12 +187,14 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
 - **Pages:**
   - Home
   - Chat
+  - Talk (voice)
   - Approvals
   - What I know (memory and profile)
   - Onboarding
   - Sources
   - Activity (the audit log)
-  - Settings (passkeys, notifications, models, policies, theme)
+  - Settings (passkeys, notifications, voice, Telegram, models, policies,
+    theme)
 - **Accessibility and layout:** the end-to-end tests run axe checks on every
   page and check the phone layout at 390 px with no sideways scrolling.
 
@@ -153,22 +205,39 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
 | `.env` | Secrets and addresses (from `.env.example`; `make secrets` fills in the generated ones) |
 | `config/models.yaml` | Providers and their privacy flags, models, free-tier limits, which models each task may use, the paid budget |
 | `config/policies.yaml` | Autonomy level, risk, validators, undo window and caps for each kind of action; quiet hours |
-| `config/persona.md` | Jarvis's voice and manners |
+| `config/voice.yaml` | The speech models and Jarvis's voice, filler timing, and the exact phrases that confirm or cancel an action |
+| `config/persona.md` | Jarvis's personality and manners |
 
 ## Testing
 
 | Layer | What runs |
 |---|---|
-| Core unit and integration | pytest against real Postgres + pgvector, never SQLite: policy engine, router, auth (with a software WebAuthn authenticator), memory, onboarding, ingestion, API |
+| Core unit and integration | pytest against real Postgres + pgvector, never SQLite: policy engine, router, auth (with a software WebAuthn authenticator), memory, onboarding, ingestion, API. Voice runs over a real socket, with recorded speech going through the real turn detection and a fake speech server. Telegram runs against a fake Bot API |
 | Property-based | Hypothesis drives random event sequences through the policy engine (see security.md) |
 | Web unit | Vitest + Testing Library |
-| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, audit integrity, the phone layout and sign-in again, with axe accessibility scans |
+| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, talking to Jarvis (through Chromium's fake microphone), audit integrity, the phone layout and sign-in again, with axe accessibility scans |
+| Satellite | pytest on Linux and Windows: the conversation loop against a fake Jarvis that speaks the real protocol (wake word, barge-in, mute, follow-ups, pairing). On Windows also the real wake-word model, the installer's helpers, and the false-wake benchmark on a synthetic room |
 | Deployment | CI builds the Docker image, runs `make secrets`, starts the stack and smoke-tests it (health, the PWA, 401 on protected APIs, setup code, doctor, backup) |
-| Scripts | shellcheck + shfmt for the WSL scripts; PSScriptAnalyzer (Windows PowerShell 5.1 compatibility) and helper tests on a Windows runner for `setup.ps1` |
+| Scripts | shellcheck + shfmt for the WSL scripts; PSScriptAnalyzer (Windows PowerShell 5.1 compatibility) and helper tests on a Windows runner for `setup.ps1` and `install-satellite.ps1` |
 | Secrets | gitleaks over the full history |
 
 Model calls in tests use a deterministic fake model (it only exists when
 `JARVIS_ALLOW_FAKE_LLM` is set). Tests never call a real AI provider.
+
+## The Windows satellite (`satellite/`)
+
+A small Python tray app with its own locked dependencies, installed per user
+by `scripts/windows/install-satellite.ps1`.
+
+- It listens for "Hey Jarvis" on the PC (openWakeWord). Only then does it
+  connect, to the same voice socket as the app, with the device token it got
+  when paired.
+- It's half-duplex: while Jarvis speaks, the microphone isn't sent, but
+  "Hey Jarvis" still interrupts.
+- After an answer it keeps listening for a follow-up for a few seconds, then
+  hangs up.
+
+[satellite/README.md](../satellite/README.md) has the details.
 
 ## Decisions
 

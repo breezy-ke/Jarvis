@@ -12,3 +12,5 @@ isn't deleted: it's marked superseded, with a link to the one that replaced it.
 | [0004](0004-privacy-router-fails-closed.md) | Every AI call goes through a privacy router that fails closed |
 | [0005](0005-windows-wsl2-docker-engine.md) | Run on the owner's Windows PC: WSL2 + Docker Engine, a boot task, no Docker Desktop |
 | [0006](0006-passkeys-over-tailscale.md) | Passkeys for sign-in; reach the PC only over Tailscale |
+| [0007](0007-voice-in-the-core-over-a-websocket.md) | Voice runs in the core, over one WebSocket, with a local speech server |
+| [0008](0008-telegram-by-long-polling.md) | Telegram through the raw Bot API, by long polling |
