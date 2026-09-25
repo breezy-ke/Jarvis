@@ -15,6 +15,9 @@ function setupCode(): string {
 }
 
 async function send(page: Page, text: string) {
+  // The composer ignores Enter while Jarvis is still answering, so wait for that
+  // answer to finish (its Stop button goes away) instead of just its first words.
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   const box = page.getByLabel("Message");
   await box.fill(text);
   await box.press("Enter");
