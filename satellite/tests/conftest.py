@@ -27,14 +27,18 @@ def frame(value: int) -> np.ndarray:
 class FakeMic:
     """A microphone the test speaks into, one 80 ms frame at a time."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, missing: int = 0) -> None:
         self.queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
+        self.missing = missing  # how many more times opening it fails (not plugged in yet)
 
     def say(self, value: int, count: int = 1) -> None:
         for _ in range(count):
             self.queue.put_nowait(frame(value))
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
+        if self.missing:
+            self.missing -= 1
+            raise OSError("no microphone found")
         while True:
             yield await self.queue.get()
 
@@ -157,6 +161,53 @@ class FakeJarvis:
             await self.event(ws, type="confirmation", proposal_id="p1", summary="Invite to Kickoff")
         await asyncio.sleep(self.speak_seconds)
         await self.event(ws, type="state", state="idle")
+
+
+class ScriptedJarvis:
+    """Jarvis's voice socket, driven message by message by the test.
+
+    For timing a real server can't pin down: an event queued here is like one
+    already on the wire, so the satellite reads it even if it hangs up first.
+    Pass it as the satellite's connector.
+    """
+
+    def __init__(self) -> None:
+        self.connections = 0
+        self.sent: list[str | bytes] = []
+        self.closed = False
+        self.close_code: int | None = None
+        self.close_reason: str | None = None
+        self._incoming: asyncio.Queue[str | None] = asyncio.Queue()
+
+    def event(self, **data: Any) -> None:
+        self._incoming.put_nowait(json.dumps(data))
+
+    def __call__(self, url: str, **options: Any) -> ScriptedJarvis:  # connect(url, ...)
+        self.connections += 1
+        return self
+
+    async def __aenter__(self) -> ScriptedJarvis:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+    async def send(self, data: str | bytes) -> None:
+        assert not self.closed, "sent on a closed socket"
+        self.sent.append(data)
+
+    async def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self.close_code = 1000
+            self._incoming.put_nowait(None)  # after whatever is already on the wire
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._messages()
+
+    async def _messages(self) -> AsyncIterator[str]:
+        while (message := await self._incoming.get()) is not None:
+            yield message
 
 
 @pytest.fixture

@@ -99,6 +99,15 @@ class Satellite:
             self._call.hang_up()
         self._indicator.show("muted" if muted else "sleeping")
 
+    def _show(self, state: str, detail: str | None = None) -> None:
+        """Update the tray, except while muted: then it says "muted" until unmuted.
+
+        (The tray's Mute checkbox follows what it last showed, so anything else
+        shown while muted would also make that checkbox wrong.)
+        """
+        if not self.muted:
+            self._indicator.show(state, detail)
+
     def toggle_mute(self) -> None:
         self.set_muted(not self.muted)
 
@@ -123,29 +132,33 @@ class Satellite:
 
     async def _pump(self, frames: asyncio.Queue[np.ndarray]) -> None:
         """Microphone to queue. A lost microphone (unplugged) is reopened."""
+        failed = False
         while True:
             try:
                 async for frame in self._mic.frames():
+                    if failed:  # it works again: clear the problem from the tray
+                        failed = False
+                        if self._call is None:
+                            self._show("sleeping")
                     if frames.full():
                         frames.get_nowait()
                     frames.put_nowait(frame)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                failed = True
                 log.warning("microphone problem: %s", exc)
-                self._indicator.show("error", f"The microphone stopped ({exc}). Retrying…")
+                self._show("error", f"The microphone stopped ({exc}). Retrying…")
             await asyncio.sleep(MIC_RETRY_SECONDS)
 
     async def _converse(self, frames: asyncio.Queue[np.ndarray]) -> None:
         token = self._tokens.get(self.settings.server)
         if not token:
-            self._indicator.show(
-                "unpaired", "This PC isn't paired yet. Run: jarvis-satellite pair CODE"
-            )
+            self._show("unpaired", "This PC isn't paired yet. Run: jarvis-satellite pair CODE")
             return
         if self.settings.chime:
             self._speaker.chime()
-        self._indicator.show("connecting")
+        self._show("connecting")
         call = _Call(self, frames)
         self._call = call
         try:
@@ -159,20 +172,18 @@ class Satellite:
                 await call.run(socket)
         except (OSError, InvalidHandshake, InvalidURI, TimeoutError) as exc:
             log.warning("can't reach Jarvis: %s", type(exc).__name__)
-            self._indicator.show(
-                "error", f"Can't reach Jarvis at {self.settings.server}. Is it running?"
-            )
+            self._show("error", f"Can't reach Jarvis at {self.settings.server}. Is it running?")
             return
         finally:
             self._call = None
             self._speaker.flush()
         problem = explain_close(call.close_code, call.close_reason)
         if call.close_code == CLOSE_UNAUTHORIZED:
-            self._indicator.show("unpaired", problem)
+            self._show("unpaired", problem)
         elif problem:
-            self._indicator.show("error", problem)
-        elif not self.muted:
-            self._indicator.show("sleeping")
+            self._show("error", problem)
+        else:
+            self._show("sleeping")
 
 
 class _Call:
@@ -192,6 +203,14 @@ class _Call:
 
     def hang_up(self) -> None:
         self._hung_up = True
+
+    def show(self, state: str, detail: str | None = None) -> None:
+        """Update the tray for this call, until it's hung up (muted).
+
+        News from Jarvis can still arrive after that, and mustn't undo "muted".
+        """
+        if not self._hung_up:
+            self._s._show(state, detail)
 
     async def run(self, socket: ClientConnection) -> None:
         receiver = asyncio.create_task(self._receive(socket))
@@ -215,6 +234,8 @@ class _Call:
                 frame = await asyncio.wait_for(self._frames.get(), timeout=0.1)
                 s._wake.detect(frame)  # keeps the detector in step; a 2nd "Hey Jarvis" is ignored
                 early.append(frame.tobytes())
+        if self._hung_up:  # muted just as Jarvis got ready: what was kept isn't sent
+            return
         for chunk in early:
             await socket.send(chunk)
         self.last_activity = self._clock()
@@ -223,6 +244,8 @@ class _Call:
                 frame = await asyncio.wait_for(self._frames.get(), timeout=0.25)
             except TimeoutError:
                 frame = None
+            if self._hung_up:  # muted while waiting: this frame isn't sent
+                return
             if frame is not None:
                 action = self.decide(woke=s._wake.detect(frame))  # always fed: stays in step
                 if action == "send":
@@ -232,7 +255,7 @@ class _Call:
                     await socket.send(INTERRUPT)
                     self.server_state = "listening"
                     self.last_activity = self._clock()
-                    s._indicator.show("listening")
+                    self.show("listening")
             if self._finished():
                 return
 
@@ -271,17 +294,16 @@ class _Call:
                 kind = event["type"]
                 if kind == "ready":
                     self.ready.set()
-                    s._indicator.show("listening")
+                    self.show("listening")
                 elif kind == "state":
                     self.server_state = str(event.get("state"))
-                    shown = "listening" if self.server_state == "idle" else self.server_state
-                    s._indicator.show(shown)
+                    self.show("listening" if self.server_state == "idle" else self.server_state)
                 elif kind == "interrupt":
                     s._speaker.flush()
                 elif kind == "confirmation":
                     self.awaiting_confirmation = event.get("proposal_id") is not None
                 elif kind == "error":
-                    s._indicator.show("error", str(event.get("message", ""))[:200])
+                    self.show("error", str(event.get("message", ""))[:200])
                 # What you said and what Jarvis answered ("user", "assistant") is never
                 # logged or kept here: it's in your conversation in the app.
         except ConnectionClosed:
