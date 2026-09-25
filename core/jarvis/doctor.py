@@ -336,7 +336,7 @@ async def check_voice(settings: Settings) -> list[Check]:
                 WARN,
                 "Voice sentence data",
                 "missing (Jarvis tries to download it at startup)",
-                "Run `make update` with internet access, or `jarvis fetch-text-data`.",
+                "Run `make restart` with internet access: Jarvis downloads it as it starts.",
             )
         )
     return checks

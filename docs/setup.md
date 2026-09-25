@@ -1,8 +1,9 @@
 # Setting up Jarvis on your PC
 
 This guide takes you from a Windows PC to a working Jarvis you can reach from
-your phone. Plan on about an hour for steps 1 to 5, plus 60 to 90 minutes for
-the onboarding interview in step 6, which you can split across sessions.
+your phone and talk to. Plan on about an hour and a half for steps 1 to 7, plus
+60 to 90 minutes for the onboarding interview in step 8, which you can split
+across sessions.
 
 Everything runs on your PC. Your keys and passwords go into files on that PC
 only. Never paste them into a chat, an issue or a commit.
@@ -14,8 +15,10 @@ only. Never paste them into a chat, an issue or a commit.
 | 3. Google (Gmail + Calendar) | Read-only Gmail and Calendar access, for learning your style and schedule |
 | 4. AI keys | Groq (private-safe cloud models) and Gemini (public data only) |
 | 5. Optional sources | GitHub, your website, your CV or LinkedIn export |
-| 6. Onboarding interview | Jarvis learns who you are; autonomy stays off until you sign it off |
-| 7. Reboot test | Proof that Jarvis comes back by itself after a power cut |
+| 6. Voice | Talk to Jarvis in the app; "Hey Jarvis" on the PC |
+| 7. Telegram (optional) | Chat and approve everyday actions from Telegram |
+| 8. Onboarding interview | Jarvis learns who you are; autonomy stays off until you sign it off |
+| 9. Reboot test | Proof that Jarvis comes back by itself after a power cut |
 
 `make doctor` checks each step and tells you exactly what to fix.
 
@@ -63,13 +66,14 @@ only. Never paste them into a chat, an issue or a commit.
    - **Tailscale** installs and opens a browser for you to **sign in**. Use the
      same account you'll use on your phone. If it asks you to enable HTTPS
      certificates or Serve for your tailnet, open the link and approve.
-   - **The first build** of Jarvis takes several minutes, then the local AI
-     model (about 5 GB) downloads.
+   - **The first start** builds Jarvis and downloads the speech server, which
+     takes several minutes. Then the local AI model (about 5 GB) and the
+     speech models (about 2 GB) download.
    - **The boot task** asks for your **Windows password**. That's the
      Microsoft account password if you sign in with one, not your PIN. Windows
      stores it so the task can start Jarvis before anyone logs in. Jarvis never
      sees it. If your organisation forbids stored passwords, run the script
-     with `-NoStoredPassword`, then check with the reboot test (step 7).
+     with `-NoStoredPassword`, then check with the reboot test (step 9).
 4. At the end it runs `make doctor` and prints your **setup code**. Keep that
    window open for step 2.
 
@@ -249,7 +253,104 @@ reject.
 
 ---
 
-## Step 6: The onboarding interview
+## Step 6: Voice
+
+Speech runs on your PC. A speech server hears you (faster-whisper) and speaks
+as Jarvis (Kokoro), in its own container next to Jarvis, so what you say never
+leaves the PC. Step 1 already started it and downloaded its models.
+
+**In the app:**
+
+1. Open **Settings > Voice**. "Speech server" should say **ready**. Tap
+   **Play a sample** to hear Jarvis.
+   - To choose another voice, change `voice:` in `config/voice.yaml`, then
+     `make restart`. The British male voices are `bm_george`, `bm_lewis`,
+     `bm_daniel` and `bm_fable`.
+2. Open **Talk**, tap the orb and allow the microphone. Ask something.
+   - To interrupt Jarvis, just talk over it, or tap the orb.
+   - **Hands-free** is the default. **Hold to talk** helps in a noisy room.
+   - On speakers without headphones, if Jarvis keeps interrupting itself, turn
+     off **Talk over Jarvis to interrupt** and tap the orb instead.
+   - What you said and heard is saved as a normal conversation: **Open in
+     Chat** shows it.
+3. When Jarvis reads an action back to you, say **"confirm"** or **"cancel"**.
+   - Only the exact phrases in `config/voice.yaml` count. Anything else is
+     taken as a new request, and the action keeps waiting in Approvals.
+   - High-risk actions can never be approved by voice. They need the app and
+     your passkey.
+4. "Jarvis, stand down" engages the kill switch.
+
+**"Hey Jarvis" on the PC (optional).** A small tray app listens for the wake
+word on the PC itself. Until it hears it, nothing leaves the PC.
+
+1. In Jarvis, go to **Settings > Voice > Pair the Windows app**. After a
+   passkey tap it shows a code, which works once, within 10 minutes.
+2. In a normal **Windows PowerShell** window (not as administrator), from the
+   Jarvis folder:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install-satellite.ps1
+   ```
+
+   Type the code when it asks. The app starts now and at every logon; look for
+   the round icon in the system tray.
+3. Windows must let desktop apps use the microphone: Settings > Privacy &
+   security > Microphone > **Let desktop apps access your microphone**.
+4. Say "Hey Jarvis", wait for the chime, and ask something. Mute it from the
+   tray menu or with **Ctrl+Alt+J**.
+
+[satellite/README.md](../satellite/README.md) covers the settings, the
+wake-word check and troubleshooting.
+
+**No NVIDIA GPU?** Speech then runs on the processor, and answers take longer.
+Switch to a smaller hearing model: set `stt_model:
+Systran/faster-whisper-small` in `config/voice.yaml`, then run
+`make pull-models && make restart`.
+
+---
+
+## Step 7: Telegram (optional)
+
+Chat with Jarvis from Telegram by text or voice note, and approve everyday
+actions with a tap. Jarvis fetches its Telegram messages itself, so it still
+needs no public address.
+
+1. In Telegram, message **@BotFather**, send `/newbot`, and choose a name and
+   a username for your bot. Copy the token it gives you. It looks like
+   `123456789:AA…`, and anyone who has it controls your bot, so keep it
+   secret.
+2. Add it to `~/Jarvis/.env` and restart Jarvis:
+
+   ```bash
+   cd ~/Jarvis && nano .env
+   # TELEGRAM_BOT_TOKEN=123456789:AA...
+   make restart
+   ```
+
+3. In Jarvis, go to **Settings > Telegram > Link Telegram** and confirm with
+   your passkey. Then tap **Open Telegram**, and **Start** in the chat that
+   opens. (Or send the `/start` message the card shows to your bot.) The link
+   works once, within 10 minutes.
+4. Tap **Send a test message**. It arrives in Telegram.
+
+From then on the bot answers only you. Anyone else, and any group, gets no
+reply.
+
+- Type, or send a voice note: Jarvis answers voice notes with one.
+- `/new` starts a fresh conversation, `/status` shows approvals and the kill
+  switch, and `/standdown` pauses everything Jarvis does on its own.
+- Low- and medium-risk actions arrive with **Approve** and **Reject** buttons,
+  and **Undo** while a send can still be undone. High-risk actions point you
+  to the app and your passkey.
+- Telegram chats aren't end-to-end encrypted. So Jarvis leaves your sensitive
+  memories and your personal profile out of them, and masks anything that
+  looks like a secret. [security.md](security.md) has the details.
+
+`make doctor ONLINE=1` checks the token with Telegram.
+
+---
+
+## Step 8: The onboarding interview
 
 Open **Getting to know you** (Onboarding). There are 12 short modules:
 
@@ -266,8 +367,9 @@ Open **Getting to know you** (Onboarding). There are 12 short modules:
 11. Boundaries
 12. Optional personal details
 
-You can type or, from Phase 2, talk. You can stop anytime, and it picks up
-where you left off.
+You answer by typing. You can stop anytime, and it picks up where you left
+off. What you tell Jarvis elsewhere (in chat, on the Talk page or on Telegram)
+teaches it too: it shows up on the "What I know" page for you to confirm.
 
 When the required answers are at least 80% complete, review the summary on the
 "What I know" page and **sign it off**. Until you do, Jarvis only talks and
@@ -276,7 +378,7 @@ any time, and the change applies immediately.
 
 ---
 
-## Step 7: The reboot test
+## Step 9: The reboot test
 
 Do this once, to prove Jarvis survives a power cut with nobody logged in:
 

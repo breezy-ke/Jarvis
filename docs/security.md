@@ -15,6 +15,8 @@ depend on an AI model behaving well.
 | Threat | Defence |
 |---|---|
 | **Someone on the internet** | Nothing listens publicly. Every port binds to `127.0.0.1`; your devices reach Jarvis only through Tailscale (WireGuard). The database sits on a Docker network with no internet access and no published port. |
+| **Another website or device reaching your voice** | The voice socket only opens for Jarvis's own pages with your session, or for a device you paired. A device's token is stored only as a hash, and removing the device cuts it off. |
+| **A stranger on Telegram** | The bot answers only the account you linked, after a passkey tap. Anyone else, and any group, gets no reply at all. |
 | **A stolen phone or laptop** | Passkeys (Face ID, fingerprint, Windows Hello) instead of passwords. High-risk approvals need a fresh passkey tap, not just a signed-in session. You can remove a device's passkey and sign out every device (runbook: "Lost access"). |
 | **Malicious email and web pages** (prompt injection) | They're treated as untrusted data (next section). An AI can only *propose* actions; code decides what happens. |
 | **The AI making a mistake** | Nothing outward-facing happens without your approval unless you loosen a policy yourself. Every action has a preview and a log entry, and sends get a 60-second undo window. |
@@ -174,12 +176,87 @@ container on your PC. Its own usage analytics are turned off.
   Scheduler, not by Jarvis. Use `-NoStoredPassword` if you'd rather not;
   docs/setup.md explains the trade-off.
 
+## Voice
+
+- **Audio stays on the PC.** Speech-to-text and text-to-speech run in the
+  `speech` container:
+  - It has no published port, and it only answers requests that carry
+    `SPEECH_API_KEY`.
+  - Its logs, and the voice pipeline's, only record warnings, because their
+    debug output would include what was said.
+- **The voice socket** (`/api/voice/ws`) accepts two kinds of caller:
+  - **The app**, with your session cookie. Jarvis checks the page's origin, so
+    a page on another site can't open the socket (cross-site WebSocket
+    hijacking).
+  - **A paired device**, with its token. Each token is random (256 bits),
+    shown to the device once, and stored only as a SHA-256 hash. Removing the
+    device in Settings > Voice cuts it off.
+
+  At most two voice sessions run at once.
+- **Pairing a device** needs a code that you make in the app, after a passkey
+  tap. The code:
+  - works once, and expires after 10 minutes
+  - is stored only as a hash
+  - locks after 10 wrong tries in 15 minutes
+
+  Linking Telegram uses the same rules.
+- **The PC's tray app** (the satellite):
+  - Until it hears "Hey Jarvis", nothing leaves the PC and no connection is
+    open. The wake word is detected on the PC (openWakeWord), with models
+    checked against pinned SHA-256 hashes.
+  - While Jarvis speaks, the microphone isn't sent, so Jarvis never hears
+    itself.
+  - Muting ignores the microphone completely and hangs up. Nothing is sent
+    after you mute, not even what it kept while connecting.
+  - Its token lives in Windows Credential Manager and is never logged.
+- **Approving by voice:**
+  - Only risk levels whose `approval_channels` include `voice` can be approved
+    by voice: low and medium by default. High and critical never can: Jarvis
+    refuses to start if `policies.yaml` tries to allow it.
+  - Jarvis reads the action back and waits for an exact phrase from
+    `config/voice.yaml`, such as "confirm" or "cancel". Speech recognition
+    mishears, and a TV can talk, so casual words like "yeah" never approve
+    anything; tests check this. Anything else counts as a new request, and
+    the action keeps waiting in Approvals.
+  - The confirmation is bound to the hash of the action that was read out,
+    and expires after 60 seconds.
+  - "Jarvis, stand down" turns the kill switch on without asking, because it
+    can only make Jarvis do less.
+
+## Telegram
+
+- **One owner.** The bot answers only the Telegram account you link, with a
+  code made in the app after a passkey tap. Anyone else, and any group, gets no
+  reply at all, not even an error.
+- **Telegram chats aren't end-to-end encrypted,** so Telegram's servers can
+  read them. In Telegram conversations:
+  - The model doesn't see your sensitive memories, summaries of past
+    conversations, or the personal section of your profile, so it can't repeat
+    them. It's told to keep secrets, money, health and family details for the
+    app, along with any topics you listed as sensitive.
+  - Anything that looks like a secret (keys, tokens, passwords) is masked
+    before a message leaves Jarvis.
+- **Forwarded messages** are someone else's words. Jarvis reads them as
+  untrusted information, never as instructions.
+- **Buttons are bound to the action.**
+  - Approve and Reject carry the action's ID and the start of its payload
+    hash, and go through the same policy engine as the app.
+  - They only appear for the risk levels `policies.yaml` allows on Telegram:
+    low and medium by default, never high or critical.
+- **The bot token** controls the bot. It lives in `.env`, and Jarvis strips it
+  from its HTTP logs and error messages. If it leaks, revoke it in @BotFather
+  (runbook: "Rotating secrets").
+- **No open port.** Jarvis fetches its messages from Telegram (long polling),
+  so nothing on the internet can reach it.
+
 ## Secrets and encryption
 
 - `.env` holds every secret. It's gitignored, created with mode 600, and never
   baked into images: `.dockerignore` excludes it.
 - OAuth tokens (Google) are encrypted with `JARVIS_SECRET_KEY` (Fernet:
   AES-128-CBC + HMAC-SHA256). Keep a copy of that key apart from your backups.
+- `SPEECH_API_KEY` is generated by `make secrets`, and only Jarvis and the
+  speech server know it. `TELEGRAM_BOT_TOKEN` comes from @BotFather.
 - Only read-only Google scopes are requested for now (`gmail.readonly`,
   `calendar.readonly`). Sending arrives in Phase 3, behind approvals.
 - Tests strip every credential from the environment, so a test can never call
@@ -198,9 +275,17 @@ container on your PC. Its own usage analytics are turned off.
 - **Web push:** notifications travel through your browser maker's push
   service, encrypted end to end (Web Push encryption), so that service can't
   read them.
-- **Downloads:** updates and models come from their official sources
-  (Docker images, Python and npm packages, Ollama models, the embedding
-  model), when you install, `make update` or `make pull-models`.
+- **Telegram:** only if you set it up. Your messages to the bot, and its
+  replies, go through Telegram's servers (see "Telegram" above for what's
+  kept out).
+- **Your voice:** never, except voice notes you send on Telegram. Speech is
+  handled on the PC.
+- **Downloads:** updates and models come from their official sources, when you
+  install, `make update` or `make pull-models`:
+  - Docker images, and Python and npm packages
+  - Ollama models, the embedding model and the speech models (Hugging Face)
+  - the wake-word models and the voice sentence data, checked against pinned
+    SHA-256 hashes
 - **Nothing else.** Jarvis has no telemetry, analytics or crash reporting.
 
 ## Residual risks, and what you can do
@@ -210,6 +295,12 @@ container on your PC. Its own usage analytics are turned off.
   automatic updates.
 - **Free-tier terms change.** Re-check the provider table when you add keys,
   and keep `make doctor ONLINE=1` in your routine.
+- **Voice doesn't know who's speaking.** Anyone in the room can say
+  "Hey Jarvis", ask things, and say "confirm" while a low- or medium-risk
+  action waits. Mute the PC's tray app when you have visitors. Or remove
+  `voice` from `approval_channels` in `policies.yaml`, and approve in the app
+  instead. Checking that it's your voice (speaker verification) is a possible
+  later addition.
 - **Outreach law.** Before the lead engine (Phase 5) sends anything, have a
   Kenyan data-protection lawyer confirm the approach under the Data Protection
   Act 2019. The built-in opt-out and suppression features support compliance

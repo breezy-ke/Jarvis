@@ -7,14 +7,15 @@ How to run, check, update, back up and fix Jarvis. Run the commands in Ubuntu
 
 | Command | What it does |
 |---|---|
-| `make doctor` | Checks everything (host, Windows, Tailscale, keys, database, models) and prints the fix for each problem |
-| `make doctor ONLINE=1` | Also tests your API keys and that configured model IDs still exist |
+| `make doctor` | Checks everything (host, Windows, Tailscale, keys, database, models, voice, Telegram) and prints the fix for each problem |
+| `make doctor ONLINE=1` | Also tests your API keys and Telegram token, and that configured model IDs still exist |
 | `make ps` | Shows what's running |
 | `make logs` | Follows the core logs (`make logs SERVICE=ollama` for another service) |
 | `make restart` | Restarts the core; needed after editing `.env` or `config/` |
 | `make up` / `make down` | Starts / stops Jarvis (your data stays in Docker volumes) |
 | `make setup-token` | Prints a new first-run setup code |
-| `make pull-models` | Downloads the local models named in `config/models.yaml` |
+| `make pull-models` | Downloads the local AI models (`config/models.yaml`) and the speech models (`config/voice.yaml`) |
+| `make bench-voice` | Times how fast Jarvis answers out loud (target: under 1.5 s; `RUNS=10` for more turns) |
 | `make update` | Pulls the latest code, rebuilds, restarts |
 | `make backup` / `make restore FILE=…` | Database backup and restore (see below) |
 
@@ -145,6 +146,59 @@ Work through these in order:
    `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`, then
    `make restart`.
 
+## Voice
+
+**Settings > Voice** and `make doctor` both show the speech server's state:
+
+| It says | Fix |
+|---|---|
+| **models missing** | `make pull-models` |
+| **key refused** | `make up`: Jarvis and the speech server then both use `SPEECH_API_KEY` from `.env` |
+| **not working** | `make up`; if it stays down, `make logs SERVICE=speech` says why |
+| "Voice is missing its sentence data" | `make restart` with internet access: Jarvis downloads it as it starts |
+| "Voice is off" | `config/voice.yaml` has a mistake: `make doctor` names it. Fix it, then `make restart` |
+
+More problems:
+
+- **The Talk page can't use the microphone.** The browser only allows it over
+  HTTPS: open Jarvis at its `https://…ts.net` address, then allow the
+  microphone in the browser's site settings.
+- **"Voice is already open somewhere else".** Jarvis takes two voice sessions
+  at a time, for example the app and the PC's tray app. End one: close the
+  Talk page on another device, or finish the conversation on another PC.
+- **Answers are slow.** Run `make bench-voice`. It asks a recorded question
+  over the real voice socket and shows where the time goes:
+  - **heard** is slow: speech-to-text. Without a GPU, use a smaller
+    `stt_model` (setup.md, step 6).
+  - **answered** is slow: the language model. Check `make doctor` for the
+    recommended model size for your GPU.
+  - **speaking** is slow: text-to-speech.
+- **The speech server's GPU build won't start.** It needs an NVIDIA driver
+  from 560 or later, and `make doctor` warns if yours is older. Update the
+  driver on Windows (nvidia.com or GeForce Experience), then run
+  `wsl --shutdown` in PowerShell and `make up`. If you can't update it (a
+  managed PC, say), the older CUDA 12.4 build works with drivers from 551:
+  1. Add `SPEECH_GPU_IMAGE=ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.4.1` to
+     `.env`, then `make up`.
+  2. Remove that line once the driver is updated, so updates reach the speech
+     server again.
+- **"Hey Jarvis" on the PC:** see the troubleshooting table in
+  [satellite/README.md](../satellite/README.md). To stop a PC from connecting,
+  remove it in Settings > Voice: its token no longer opens a conversation.
+
+## Telegram
+
+- **The bot doesn't answer.** Run `make doctor ONLINE=1`: it checks the token
+  with Telegram. If it's rejected, get it again from @BotFather, put it in
+  `.env`, then `make restart`. `make logs` shows what the bot is doing (never
+  the token).
+- **The link has expired or was already used.** Make a new one: Settings >
+  Telegram > **Link Telegram**. A link works once, within 10 minutes.
+- **A new phone or Telegram account:** link again from Settings. The newest
+  link wins, and the old chat is told it's disconnected.
+- **Stop using Telegram:** Settings > Telegram > **Unlink**, then remove
+  `TELEGRAM_BOT_TOKEN` from `.env` and `make restart`.
+
 ## Changing AI models
 
 Everything is in `config/models.yaml`: providers, models, and which models
@@ -188,6 +242,9 @@ refuses to start if the file tries:
 | `POSTGRES_PASSWORD` | Change it inside Postgres first (`ALTER USER jarvis PASSWORD '…'`), then in `.env`, then `make up` |
 | `JARVIS_SECRET_KEY` | Don't, unless it leaked: a new key can't read existing OAuth tokens, so reconnect Google afterwards |
 | VAPID keys | Changing them unsubscribes every device from notifications; re-enable them in Settings afterwards |
+| `SPEECH_API_KEY` | Put a new random value in `.env` (for example from `openssl rand -base64 32`), then `make up`, which restarts both Jarvis and the speech server with it |
+| `TELEGRAM_BOT_TOKEN` | In @BotFather: `/revoke`, pick your bot, and put the new token in `.env`; then `make restart`. Your link survives, because it's the same bot |
+| A satellite's device token | Settings > Voice: remove the PC, then pair it again |
 
 ## Checks per phase
 
@@ -229,6 +286,55 @@ with synthetic data. These checks use your real setup.
       copies of emails.
 9. Activity > **Verify integrity**: "Log intact".
 10. The reboot test (above).
+
+### Phase 2 (voice and Telegram)
+
+1. `make doctor`: the voice checks (voice.yaml, speech server, speech models,
+   sentence data) and Telegram are ✔.
+2. Settings > Voice: **Play a sample**.
+3. **Talk:**
+   1. Ask a question on the Talk page. The transcript shows what Jarvis heard,
+      and it answers out loud.
+   2. Ask for something with a long answer, then talk over it. Jarvis stops
+      within a moment and listens.
+   3. **Open in Chat** shows the conversation, including the part of the
+      answer you heard before you interrupted.
+4. **The latency target:** `make bench-voice` prints PASS: every turn
+   answered, with a median under 1.5 s to the first sound.
+5. **Approving by voice:** only notifications exist as actions so far. Once
+   your profile is signed off, Jarvis sends those without asking. So first:
+   1. Set `notify.owner` to `autonomy: L2` in `config/policies.yaml`, then
+      `make restart`.
+   2. On the Talk page, ask Jarvis to send you a notification saying hello.
+      It reads the action back. Say **"confirm"**: the notification arrives,
+      and Activity shows "Approved notify.owner via voice".
+   3. Ask again and say **"cancel"**: nothing arrives, and it's rejected in
+      Approvals.
+   4. Ask again and say something else, like "hmm, maybe": it must stay
+      waiting in Approvals.
+   5. Set `notify.owner` back to `L3`, then `make restart`.
+
+   High-risk actions can't be approved by voice at all. The automated tests
+   cover that until a high-risk action exists (Phase 5).
+6. Say **"Jarvis, stand down"**: the kill switch is on (Home). Release it.
+7. **"Hey Jarvis" on the PC:**
+   1. Say "Hey Jarvis", then a question. It answers through the speakers.
+   2. During a long answer, say "Hey Jarvis" again: it stops and listens.
+   3. Press **Ctrl+Alt+J**: the tray icon turns red, and "Hey Jarvis" does
+      nothing. Press it again to unmute.
+8. **Wake-word false alarms** (the target is fewer than 1 an hour): record an
+   ordinary hour in the room and score it, as in
+   [satellite/README.md](../satellite/README.md) ("Wake-word check").
+9. **Telegram:**
+   1. Send a text, then a voice note. The voice note gets a spoken reply.
+   2. With `notify.owner` at L2 as in check 5, ask for a notification: it
+      arrives with **Approve** and **Reject**. Approve one and reject
+      another. Each message updates to show the outcome.
+   3. Approve one in the app instead: the Telegram message updates to say so.
+   4. `/standdown` turns on the kill switch. Release it in the app.
+   5. From another Telegram account, message the bot: no reply at all.
+10. Settings > Voice: remove a paired PC, then say "Hey Jarvis" to it. Its
+    tray app says it isn't paired any more.
 
 Later phases add their own checks here as they ship. For example, the email
 phase will include sending yourself a prompt-injection email and confirming

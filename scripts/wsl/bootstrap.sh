@@ -168,7 +168,7 @@ account picks up the docker group):
   make secrets       # creates .env with generated secrets
   nano .env          # set JARVIS_PUBLIC_ORIGIN to your Tailscale https:// address
   make up            # builds and starts Jarvis (the first build takes a few minutes)
-  make pull-models   # downloads the private local AI model
+  make pull-models   # downloads the local AI and speech models
   make doctor        # checks everything and explains any fixes
 
 scripts/windows/setup.ps1 does all of this for you when you run it on Windows.

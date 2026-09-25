@@ -94,7 +94,7 @@ with recordings of you saying “Hey Jarvis” to see how often it still wakes.
 | “Not paired” | Pair again: Settings → Voice → Pair the Windows app. |
 | Never wakes | `jarvis-satellite test-mic`: the level should move when you talk. Check the Windows microphone privacy setting and `input_device`. |
 | Wakes by itself | Raise `wake_threshold`; run the wake-word check above. |
-| “Voice is already open somewhere else” | Close the Talk page in the app (one voice session at a time). |
+| “Voice is already open somewhere else” | Jarvis takes two voice conversations at a time. Close the Talk page on another device, or finish the conversation on another PC. |
 
 ## Development
 
