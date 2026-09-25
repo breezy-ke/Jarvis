@@ -17,7 +17,15 @@ from sqlalchemy import select
 from jarvis.clock import FrozenClock
 from jarvis.db.models import Fact, OAuthToken
 from jarvis.db.session import transaction
-from jarvis.ingestion.google import GMAIL, TOKEN_URL, GoogleAuth, GoogleError
+from jarvis.ingestion.google import (
+    CALENDAR_EVENTS,
+    CALENDAR_READONLY,
+    GMAIL,
+    GMAIL_MODIFY,
+    TOKEN_URL,
+    GoogleAuth,
+    GoogleError,
+)
 from jarvis.ingestion.service import IngestionError, IngestionService
 from jarvis.memory.store import FactStatus
 from jarvis.services import Services
@@ -82,8 +90,9 @@ async def test_oauth_uses_pkce_and_encrypts_tokens(services: Services, auth: Goo
     query = parse_qs(urlparse(url).query)
     assert query["code_challenge_method"] == ["S256"]
     assert query["access_type"] == ["offline"]
-    assert "gmail.readonly" in query["scope"][0]
-    assert "gmail.send" not in query["scope"][0]
+    # Read, label, draft and send (never permanent delete), plus private calendar holds.
+    assert query["scope"][0].split() == [GMAIL_MODIFY, CALENDAR_READONLY, CALENDAR_EVENTS]
+    assert query["include_granted_scopes"] == ["true"]
     await connect_google(services, auth)
     async with services.session_factory() as session:
         row = await session.get(OAuthToken, "google")

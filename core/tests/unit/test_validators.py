@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jarvis.policy.config import ActionKindPolicy
 from jarvis.policy.types import Autonomy, Risk
 from jarvis.policy.validators import (
+    KnownContacts,
     NoKnownContacts,
     ValidationContext,
     attachment_mentioned,
@@ -16,16 +17,17 @@ from jarvis.policy.validators import (
     opt_out_present,
     recipients_known,
 )
+from tests.policy_helpers import SetContacts
 
 
-def ctx(payload: dict[str, Any]) -> ValidationContext:
+def ctx(payload: dict[str, Any], contacts: KnownContacts | None = None) -> ValidationContext:
     return ValidationContext(
         kind="x.y",
         payload=payload,
         policy=ActionKindPolicy(description="t", autonomy=Autonomy.L2, risk=Risk.MEDIUM),
         session=cast(AsyncSession, None),
         now=datetime(2026, 1, 1, tzinfo=UTC),
-        contacts=NoKnownContacts(),
+        contacts=contacts or NoKnownContacts(),
     )
 
 
@@ -66,6 +68,18 @@ async def test_recipients_unknown_warns_and_bcc_is_flagged() -> None:
     result = await recipients_known(ctx({"to": ["a@b.co"], "bcc": ["c@d.co"]}))
     assert result.outcome == "warn"
     assert "BCC" in result.message
+
+
+async def test_people_already_on_the_conversation_count_as_known() -> None:
+    contacts = SetContacts(threads={"t1": {"achieng@client.co.ke", "otieno@client.co.ke"}})
+    reply = {"thread_id": "t1", "to": ["achieng@client.co.ke"], "cc": ["Otieno@Client.co.ke"]}
+    assert (await recipients_known(ctx(reply, contacts))).outcome == "pass"
+    elsewhere = {**reply, "thread_id": "t2"}  # the same people, on another conversation
+    assert (await recipients_known(ctx(elsewhere, contacts))).outcome == "warn"
+    added = {**reply, "cc": ["new@else.test"]}
+    result = await recipients_known(ctx(added, contacts))
+    assert result.outcome == "warn"
+    assert "new@else.test" in result.message
 
 
 async def test_attachment_consistency() -> None:
