@@ -158,6 +158,7 @@ class MailService:
             access=self.access,
         )
         self._labels: dict[str, str] | None = None
+        self._told_reconnect = False
         self._wake_sync = asyncio.Event()
         self._wake_triage = asyncio.Event()
         register_mail_actions(services.registry, self)
@@ -243,6 +244,11 @@ class MailService:
             report = await self.sync.sync_once()
         except GmailAuthError as exc:
             log.warning("mail: Google access needs attention: %s", exc)
+            if not self._told_reconnect:  # once it reaches you, not every minute
+                try:
+                    self._told_reconnect = await self.alerts.access_lost()
+                except Exception:
+                    log.exception("mail: telling you about Google access failed")
             return None
         except (GmailError, httpx.HTTPError) as exc:
             log.warning("mail: sync failed, will retry: %s", exc)
@@ -250,6 +256,7 @@ class MailService:
         except Exception:  # keep syncing next round
             log.exception("mail: sync round failed")
             return None
+        self._told_reconnect = False
         if report is not None:
             try:
                 await self.after_sync(report)

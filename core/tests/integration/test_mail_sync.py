@@ -7,8 +7,11 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select, text
 
+from jarvis import doctor
 from jarvis.db.models import MailContact, MailMessage, MailThread
 from jarvis.mail.gmail import GmailAuthError
+from jarvis.mail.service import MailService
+from tests.conftest import make_settings
 from tests.integration.mail_helpers import OWNER, MailRig
 
 pytestmark = pytest.mark.db
@@ -178,3 +181,41 @@ async def test_old_email_text_is_purged_but_the_thread_stays(mail: MailRig) -> N
     assert message is not None
     assert message.body_enc is None
     assert message.subject_enc is not None
+
+
+async def test_the_doctor_reads_how_email_is_doing_and_reaches_gmail(
+    mail: MailRig, mailer: MailService
+) -> None:
+    key = mail.services.settings.secret_key
+    assert key is not None
+    settings = make_settings(
+        JARVIS_SECRET_KEY=key.get_secret_value(),  # the key your Google token is locked with
+        JARVIS_GOOGLE_FAKE_BASE="http://google.test",
+        GOOGLE_OAUTH_CLIENT_ID="fake-client",
+        GOOGLE_OAUTH_CLIENT_SECRET="fake-secret",
+    )
+
+    async def doctor_says() -> dict[str, doctor.Check]:
+        checks = await doctor.check_email(settings, mail.http, online=True, clock=mail.clock)
+        return {check.title: check for check in checks}
+
+    before = await doctor_says()
+    assert before["Gmail access"].status == doctor.OK
+    assert before["Email sync"].detail == "Jarvis hasn't read your inbox yet"
+    assert before["Gmail (online)"].detail == f"reachable as {OWNER}"
+    assert before["Jarvis labels"].detail.startswith("0 of 7 in Gmail")
+
+    await mailer.sync_round()
+    mail.clock.advance(minutes=3)
+    after = await doctor_says()
+    assert (after["Email sync"].status, after["Email sync"].detail) == (
+        doctor.OK,
+        "last check 3 minutes ago",
+    )
+
+    mail.fake.faults.add("revoked")  # you changed your Google password
+    await mailer.sync_round()
+    revoked = await doctor_says()
+    assert revoked["Email sync"].status == doctor.FAIL
+    assert revoked["Gmail (online)"].status == doctor.FAIL
+    assert "connect Google again" in revoked["Gmail (online)"].fix

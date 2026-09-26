@@ -221,6 +221,19 @@ class MailAlerts:
         )
         return delivered.anywhere
 
+    async def access_lost(self) -> bool:
+        """Google stopped accepting Jarvis's access (changing your password does this)."""
+        delivered = await self._notifier.tell(
+            title="Reconnect Google",
+            body=(
+                "Google stopped accepting Jarvis's access to your Gmail, so email is paused. "
+                "Connect Google again in Sources: Jarvis carries on from where it stopped."
+            ),
+            url="/sources",
+            silent=self._notifier.quiet_now(),
+        )
+        return delivered.anywhere
+
     # --- Digests ---------------------------------------------------------------------------
 
     async def latest(self) -> Digest | None:
