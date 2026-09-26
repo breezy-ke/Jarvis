@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,7 +12,7 @@ from jarvis.db.session import transaction
 from jarvis.mail.digest import DIGEST_KEY
 from jarvis.mail.service import MailService
 from jarvis.workflows import scheduler
-from tests.integration.mail_helpers import MailRig, ScriptedMail
+from tests.integration.mail_helpers import MailRig, Notes, ScriptedMail
 
 pytestmark = pytest.mark.db
 
@@ -24,20 +23,6 @@ URGENT = {
     "needs_reply": True,
     "summary": "The site is down; asks you to call.",
 }
-
-
-@dataclass
-class Notes:
-    """Stands in for Telegram: what Jarvis told you, and whether it was silent."""
-
-    said: list[tuple[str, bool]] = field(default_factory=list)
-
-    async def tell_owner(self, text: str, *, silent: bool = False) -> bool:
-        self.said.append((text, silent))
-        return True
-
-    def alerts(self) -> list[str]:
-        return [text for text, _ in self.said if text.startswith("📧")]
 
 
 @pytest.fixture

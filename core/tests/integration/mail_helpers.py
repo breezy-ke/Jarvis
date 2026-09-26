@@ -108,3 +108,17 @@ class ScriptedMail:
             self.drafting_prompts.append(prompt)
             answer = {"body": self.reply}
         return ModelResponse(parts=[ToolCallPart(output.name, answer)])
+
+
+@dataclass
+class Notes:
+    """Stands in for Telegram: what Jarvis told you, and whether it was silent."""
+
+    said: list[tuple[str, bool]] = field(default_factory=list)
+
+    async def tell_owner(self, text: str, *, silent: bool = False) -> bool:
+        self.said.append((text, silent))
+        return True
+
+    def alerts(self) -> list[str]:
+        return [text for text, _ in self.said if text.startswith("📧")]

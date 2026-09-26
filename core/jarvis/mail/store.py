@@ -106,6 +106,7 @@ class MailStore:
                     "plain_differs": bool(parsed.plain_text)
                     and plain_differs(parsed.plain_text, parsed.body),
                     "concealed": list(parsed.concealed_signals),
+                    "links": parsed.links,
                 },
                 size=parsed.size,
                 fetched_at=now,

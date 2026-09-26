@@ -27,7 +27,7 @@ from jarvis.chat.service import ChatService
 from jarvis.config import Settings, get_settings
 from jarvis.db.migrate import run_migrations
 from jarvis.db.session import SessionFactory, create_engine, create_session_factory, transaction
-from jarvis.ingestion.google import GoogleAuth, GoogleEndpoints
+from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
 from jarvis.mail.config import load_email_config
 from jarvis.mail.service import MailService
@@ -114,18 +114,8 @@ def create_app(
         http = httpx.AsyncClient(
             timeout=20.0, headers={"User-Agent": "Jarvis/0.1"}, transport=http_transport
         )
-        google = GoogleAuth(
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret.get_secret_value()
-            if settings.google_client_secret
-            else None,
-            redirect_uri=settings.google_redirect_uri,
-            vault=services.vault,
-            clock=services.clock,
-            http=http,
-            endpoints=GoogleEndpoints.fake(settings.google_fake_base)
-            if settings.google_fake_base
-            else None,
+        google = GoogleAuth.from_settings(
+            settings, vault=services.vault, clock=services.clock, http=http
         )
         auth_service = AuthService(settings=settings, audit=services.audit, clock=services.clock)
         voice = build_voice_runtime(settings, services)

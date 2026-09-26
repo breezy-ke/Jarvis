@@ -21,6 +21,7 @@ from jarvis.memory.retrieval import render_facts, search_facts
 from jarvis.policy.state import get_kill_switch
 from jarvis.policy.types import Status
 from jarvis.profile.service import core_summary
+from jarvis.security.untrusted import contains_untrusted
 from jarvis.services import Services
 
 HISTORY_TURNS = 12
@@ -58,6 +59,19 @@ The owner is talking to you and hears your reply spoken aloud. So:
 - If you proposed an action, say what it is in one sentence; Jarvis will ask
   the owner to confirm it.
 """
+
+
+def carries_untrusted(history: list[ModelMessage], text: str) -> bool:
+    """Whether someone else's words (an email, a forwarded message) are in the context."""
+    if contains_untrusted(text):
+        return True
+    for message in history:
+        for part in message.parts:
+            content = getattr(part, "content", None)
+            pieces = content if isinstance(content, list) else [content]
+            if any(isinstance(piece, str) and contains_untrusted(piece) for piece in pieces):
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -206,6 +220,7 @@ class ChatService:
             conversation_id=conversation_id,
             redact_sensitive=redact,
             mail=self.mail,
+            read_untrusted=carries_untrusted(history, text),
         )
         chunks: list[str] = []
         try:

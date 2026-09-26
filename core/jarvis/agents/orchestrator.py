@@ -27,7 +27,17 @@ from jarvis.policy.engine import PolicyError
 from jarvis.policy.state import get_kill_switch
 from jarvis.policy.types import Status
 from jarvis.profile.service import completeness
-from jarvis.security.untrusted import wrap
+from jarvis.security.untrusted import contains_untrusted, wrap
+
+MEMORY_LOCKED = (
+    "Not done: this conversation includes someone else's words (an email or a forwarded "
+    "message), and Jarvis never changes its memory where they could have asked for it. "
+    "The owner can say it again in a new conversation, or use the What I know page."
+)
+HELD_FOR_REVIEW = (
+    "Suggested in a conversation that includes an email or a forwarded message: "
+    "check it's what you asked for"
+)
 
 UPCOMING_CAPABILITIES = {
     "Daily tech brief and web research": "Phase 4",
@@ -56,6 +66,13 @@ def _thread_line(number: int, item: ThreadItem, tz: tzinfo) -> str:
     return f"{number}. thread id {item.id} · {', '.join(facts)}\n" + wrap(
         written, source=source, kind="email summary", max_chars=900
     )
+
+
+def _seen(deps: AgentDeps, answer: str) -> str:
+    """A tool's answer for the model, noting when it carries someone else's words."""
+    if contains_untrusted(answer):
+        deps.read_untrusted = True
+    return answer
 
 
 def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
@@ -108,6 +125,8 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
             category: One of identity, business, client, project, preference,
                 contact, schedule, goal, skill, note.
         """
+        if ctx.deps.read_untrusted:
+            return MEMORY_LOCKED
         services = ctx.deps.services
         if category not in CATEGORIES or category == "profile_suggestion":
             category = "note"
@@ -140,6 +159,8 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
         Args:
             fact_ids: The ids shown by search_memory.
         """
+        if ctx.deps.read_untrusted:
+            return MEMORY_LOCKED
         services = ctx.deps.services
         forgotten = 0
         async with transaction(services.session_factory) as session:
@@ -178,6 +199,7 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
                     rationale=rationale,
                     created_by=ctx.deps.actor,
                     conversation_id=ctx.deps.conversation_id,
+                    hold_reason=HELD_FOR_REVIEW if ctx.deps.read_untrusted else None,
                 )
         except PolicyError as exc:
             return f"Not possible: {exc}"
@@ -246,7 +268,7 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
             "Looked at the inbox",
             {"search": bool(words), "shown": len(items)},
         )
-        return "\n".join(lines)
+        return _seen(ctx.deps, "\n".join(lines))
 
     @agent.tool
     async def draft_email_reply(
@@ -295,9 +317,16 @@ def build_orchestrator(persona: str) -> Agent[AgentDeps, str]:
             kind="email draft",
             max_chars=1_500,
         )
-        return (
+        if view.proposal.status == Status.REFUSED:
+            return _seen(
+                ctx.deps,
+                f"Drafted, but Jarvis won't send it as written: {view.proposal.status_reason}. "
+                f"The owner can change it in the Inbox.\nThe draft:\n{body}",
+            )
+        return _seen(
+            ctx.deps,
             f"Drafted: {view.proposal.summary}. It waits for the owner's approval (in the "
-            f"app, on Telegram or by voice); nothing is sent before that.\nThe draft:\n{body}"
+            f"app, on Telegram or by voice); nothing is sent before that.\nThe draft:\n{body}",
         )
 
     @agent.tool

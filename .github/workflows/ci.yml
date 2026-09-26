@@ -64,7 +64,10 @@ jobs:
       - name: pyright
         run: uv run pyright
       - name: pytest
-        run: uv run pytest
+        run: uv run pytest --ignore=tests/integration/test_email_injection.py
+      - name: Email prompt-injection suite (every attack, honest and obedient model)
+        if: ${{ !cancelled() }}
+        run: uv run pytest tests/integration/test_email_injection.py -q
 
   satellite:
     name: Satellite (ruff, pyright, pytest)

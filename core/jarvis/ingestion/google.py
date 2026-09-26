@@ -30,6 +30,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jarvis.clock import Clock
+from jarvis.config import Settings
 from jarvis.db.models import OAuthPending, OAuthToken
 from jarvis.security.crypto import Vault
 
@@ -98,6 +99,25 @@ class GoogleConnection:
 
 
 class GoogleAuth:
+    @classmethod
+    def from_settings(
+        cls, settings: Settings, *, vault: Vault, clock: Clock, http: httpx.AsyncClient
+    ) -> GoogleAuth:
+        """The Google connection `.env` describes (a fake Google in tests)."""
+        return cls(
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret.get_secret_value()
+            if settings.google_client_secret
+            else None,
+            redirect_uri=settings.google_redirect_uri,
+            vault=vault,
+            clock=clock,
+            http=http,
+            endpoints=GoogleEndpoints.fake(settings.google_fake_base)
+            if settings.google_fake_base
+            else None,
+        )
+
     def __init__(
         self,
         *,

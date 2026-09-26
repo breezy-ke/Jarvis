@@ -183,9 +183,12 @@ class MailService:
             identity = (await self._s.profiles.current(session)).profile.identity
         return identity.full_name or identity.preferred_name
 
-    async def label_ids(self) -> dict[str, str]:
-        """Jarvis's labels in Gmail (name -> id), created the first time they're needed."""
-        if self._labels is not None:
+    async def label_ids(self, *, refresh: bool = False) -> dict[str, str]:
+        """Jarvis's labels in Gmail (name -> id), created the first time they're needed.
+
+        `refresh` looks them up again, re-creating any you deleted in Gmail.
+        """
+        if self._labels is not None and not refresh:
             return self._labels
         client = self.client()
         by_name = {str(item["name"]): str(item["id"]) for item in await client.labels()}
@@ -721,7 +724,7 @@ class MailService:
                 .order_by(MailDraft.created_at.desc())
                 .limit(1)
             )
-        await self._refetch_bodies([m for m in rows if m.body_enc is None])
+        await self.refetch_bodies([m for m in rows if m.body_enc is None])
         async with self._s.session_factory() as session:
             fresh = {
                 m.id: m
@@ -800,7 +803,7 @@ class MailService:
                 }
         return context
 
-    async def _refetch_bodies(self, missing: list[MailMessage]) -> None:
+    async def refetch_bodies(self, missing: list[MailMessage]) -> None:
         """Text Jarvis forgot (past the retention window) comes back from Gmail on demand."""
         if not missing or (await self.access()).level == "none":
             return

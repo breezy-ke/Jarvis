@@ -38,6 +38,7 @@ _INVISIBLE_RE = re.compile(
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _WRAPPER_TAG_RE = re.compile(r"</?\s*untrusted", re.IGNORECASE)
+_WRAPPED_RE = re.compile(r'<untrusted nonce="[0-9a-f]{8}"')
 _EXCESS_BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -87,6 +88,23 @@ _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    # Swahili: "puuza maagizo yote ya awali" (ignore all previous instructions)
+    (
+        "override_instructions_sw",
+        re.compile(
+            r"\b(puuza|sahau|dharau)\b.{0,40}\b(maagizo|maelekezo|amri)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    # Swahili: "tuma barua pepe zote / nywila kwa ..." (send all emails / the password to ...)
+    (
+        "exfiltration_request_sw",
+        re.compile(
+            r"\b(tuma|peleka|sambaza)\b.{0,60}"
+            r"\b(nywila|nenosiri|neno la siri|barua pepe zote|jumbe zote|anwani zote)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
 )
 
 
@@ -128,6 +146,11 @@ def sanitize(text: str, *, max_chars: int = 20_000) -> SanitizedText:
 
 def _attr(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9 _.:/@#?=&%+-]", "", value)[:200]
+
+
+def contains_untrusted(text: str) -> bool:
+    """Whether `text` carries content wrapped by `wrap` (someone else's words)."""
+    return _WRAPPED_RE.search(text) is not None
 
 
 def wrap(text: str, *, source: str, kind: str, max_chars: int = 20_000) -> str:

@@ -101,6 +101,11 @@ bench-voice: ## Time how fast Jarvis answers out loud (target: under 1.5 s; RUNS
 	$(call require_running,core)
 	$(COMPOSE) exec -T core jarvis bench-voice --runs $(RUNS)
 
+.PHONY: eval
+eval: ## Score how well Jarvis sorts your email, against the ones you checked (target: 90%)
+	$(call require_running,core)
+	$(COMPOSE) exec -T core jarvis eval triage
+
 .PHONY: update
 update: docker-ready ## Get the latest Jarvis and restart it
 	git pull --ff-only
@@ -179,6 +184,10 @@ test: ## Run the unit and integration tests (needs make dev-db)
 	cd core && uv run pytest
 	cd satellite && uv run pytest
 	cd web && pnpm test
+
+.PHONY: injection
+injection: ## Run the email prompt-injection suite alone (needs make dev-db)
+	cd core && uv run pytest tests/integration/test_email_injection.py -q
 
 .PHONY: e2e
 e2e: ## Run the browser end-to-end tests (needs make dev-db)

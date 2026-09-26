@@ -378,6 +378,10 @@ class FakeGmail:
             body = await request.json()
             if message_id not in fake.messages:
                 return JSONResponse({"error": {"code": 404, "message": "Not Found"}}, 404)
+            for label_id in [*(body.get("addLabelIds") or []), *(body.get("removeLabelIds") or [])]:
+                if label_id not in fake.labels:
+                    message = f"Invalid label: {label_id}"
+                    return JSONResponse({"error": {"code": 400, "message": message}}, 400)
             fake.relabel(
                 message_id,
                 add=body.get("addLabelIds") or [],

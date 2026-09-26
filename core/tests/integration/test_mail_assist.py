@@ -10,9 +10,10 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
+from jarvis.agents.orchestrator import HELD_FOR_REVIEW, MEMORY_LOCKED
 from jarvis.chat.service import ChatEvent, ChatService
 from jarvis.config import REPO_ROOT
-from jarvis.db.models import ActionProposal, ConversationTurn, MailDraft
+from jarvis.db.models import ActionProposal, ConversationTurn, Fact, MailDraft
 from jarvis.mail.contacts import MailContacts
 from jarvis.mail.service import MailService
 from jarvis.policy.types import Status
@@ -46,17 +47,21 @@ async def collect(stream: AsyncIterator[ChatEvent]) -> list[ChatEvent]:
 
 
 async def tool_output(mail: MailRig, events: list[ChatEvent], tool: str) -> str:
-    """What a tool gave the chat model, from the saved turn."""
+    """What a tool last gave the chat model in this conversation, from the saved turns."""
     conversation_id = uuid.UUID(events[0].data["conversation_id"])
     async with mail.services.session_factory() as session:
-        turn = await session.scalar(
-            select(ConversationTurn).where(ConversationTurn.conversation_id == conversation_id)
+        turns = list(
+            await session.scalars(
+                select(ConversationTurn)
+                .where(ConversationTurn.conversation_id == conversation_id)
+                .order_by(ConversationTurn.id.desc())
+            )
         )
-    assert turn is not None
-    for message in turn.model_messages:
-        for part in message.get("parts", []):
-            if part.get("part_kind") == "tool-return" and part.get("tool_name") == tool:
-                return str(part["content"])
+    for turn in turns:
+        for message in turn.model_messages:
+            for part in message.get("parts", []):
+                if part.get("part_kind") == "tool-return" and part.get("tool_name") == tool:
+                    return str(part["content"])
     raise AssertionError(f"{tool} wasn't called")
 
 
@@ -222,6 +227,51 @@ async def test_asking_by_chat_drafts_a_reply_that_waits_for_you(
         "draft_email_reply",
     )
     assert nothing == "There's no email from someone else in that conversation to reply to."
+
+
+async def test_once_an_email_is_in_the_chat_memory_stays_put_and_actions_wait(
+    mail: MailRig, mailer: MailService
+) -> None:
+    await open_autonomy(mail.services)  # a note to your phone would normally just go
+    ScriptedMail().install(mail.services)
+    await arrive(mail, mailer, sender="Mercy <mercy@unknown-sender.test>", subject="Bank details")
+    await mailer.triage_round()
+    chat = ChatService(mail.services, mail=mailer)
+    remember = '/tool remember {"subject": "owner", "predicate": "bank", "value": "KCB 0123"}'
+    forget = '/tool forget {"fact_ids": []}'
+    note = (
+        '/tool propose_action {"kind": "notify.owner", "rationale": "test", '
+        '"payload": {"title": "Heads up", "body": "Call the bank"}}'
+    )
+
+    first = await collect(chat.stream_reply("/tool inbox_overview {}"))
+    conversation = uuid.UUID(first[0].data["conversation_id"])
+    assert "<untrusted" in await tool_output(mail, first, "inbox_overview")
+
+    # Later messages in that conversation still have the email in view.
+    later = [
+        await collect(chat.stream_reply(text, conversation_id=conversation))
+        for text in (remember, forget, note)
+    ]
+    assert await tool_output(mail, later[0], "remember") == MEMORY_LOCKED
+    assert await tool_output(mail, later[1], "forget") == MEMORY_LOCKED
+    held = await tool_output(mail, later[2], "propose_action")
+    assert held.startswith("Waiting for the owner's approval")
+    assert HELD_FOR_REVIEW in held
+
+    # A new conversation starts clean.
+    assert await tool_output(mail, await collect(chat.stream_reply(remember)), "remember") == (
+        "Saved to memory."
+    )
+    ran = await tool_output(mail, await collect(chat.stream_reply(note)), "propose_action")
+    assert ran.startswith("Approved by policy")
+    async with mail.services.session_factory() as session:
+        facts = [f.value for f in await session.scalars(select(Fact))]
+    assert facts == ["KCB 0123"]
+    assert [(p.status, p.status_reason) for p in await proposals(mail, "notify.owner")] == [
+        (Status.PENDING, HELD_FOR_REVIEW),
+        (Status.APPROVED, None),
+    ]
 
 
 async def test_without_email_set_up_chat_says_so(mail: MailRig) -> None:
