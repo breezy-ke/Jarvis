@@ -17,7 +17,7 @@ cloud tiers), and it's reachable from your phone over private HTTPS.
 | **Your app:** installable on phone and desktop, passkey sign-in, push notifications, dark and light themes, accessible | ✅ Phase 0 |
 | **Voice:** talk to Jarvis in the app and interrupt it; "Hey Jarvis" on your PC; spoken replies; approve everyday actions by saying "confirm". Speech runs on your PC | ✅ Phase 2 |
 | **Telegram:** chat by text or voice note, and approve everyday actions with a tap | ✅ Phase 2 |
-| **Email:** triage, summaries, replies drafted in your style, sending with approval and a 60-second undo | Phase 3 |
+| **Email:** your Gmail sorted every minute with summaries, tasks and dates; replies drafted in your style; sending only with your approval and a 60-second undo; morning and evening digests; urgent alerts from people you know. Checked against 61 prompt-injection attacks in CI | ✅ Phase 3 |
 | **Daily tech brief and research**, with sources and "why it matters to you" | Phase 4 |
 | **Lead engine:** East African SMEs, international startups, tenders, agencies needing overflow | Phase 5 |
 | **UI Studio:** websites and apps (Next.js, Nuxt, WordPress, Laravel, Flutter, React Native) with automated design, accessibility and performance gates | Phase 6 |
@@ -75,6 +75,7 @@ make install    # Python (core and satellite) and web dependencies
 make dev-db     # throwaway Postgres + pgvector on 127.0.0.1:5432
 make check      # lint + types + unit/integration tests (what CI runs)
 make e2e        # browser end-to-end tests (Playwright)
+make injection  # the email prompt-injection suite on its own
 ```
 
 Run the app locally with hot reload (two terminals), then open
