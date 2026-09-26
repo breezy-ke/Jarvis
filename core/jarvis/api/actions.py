@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from jarvis.api.deps import Owner, State
+from jarvis.api.deps import AppState, Owner, State
 from jarvis.db.models import ActionProposal
 from jarvis.db.session import transaction
 from jarvis.policy.engine import ApprovalError
@@ -46,6 +46,18 @@ def serialize(p: ActionProposal) -> dict[str, Any]:
     }
 
 
+async def serialize_all(state: AppState, proposals: list[ActionProposal]) -> list[dict[str, Any]]:
+    """Proposals for the app; an email one also shows the email it answers."""
+    context = await state.mail.email_context(proposals) if state.mail is not None else {}
+    out: list[dict[str, Any]] = []
+    for proposal in proposals:
+        item = serialize(proposal)
+        if proposal.id in context:
+            item["email"] = context[proposal.id]
+        out.append(item)
+    return out
+
+
 class ApproveIn(BaseModel):
     payload_hash: str = Field(min_length=64, max_length=64)
     use_passkey: bool = False
@@ -68,8 +80,10 @@ async def list_actions(
     else:
         stmt = stmt.where(ActionProposal.status.not_in([s.value for s in _OPEN]))
     async with state.services.session_factory() as session:
-        rows = await session.scalars(stmt.order_by(ActionProposal.created_at.desc()).limit(limit))
-        return [serialize(p) for p in rows]
+        rows = list(
+            await session.scalars(stmt.order_by(ActionProposal.created_at.desc()).limit(limit))
+        )
+    return await serialize_all(state, rows)
 
 
 @router.get("/{proposal_id}")
@@ -78,7 +92,7 @@ async def get_action(proposal_id: uuid.UUID, owner: Owner, state: State) -> dict
         proposal = await session.get(ActionProposal, proposal_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Not found.")
-    return serialize(proposal)
+    return (await serialize_all(state, [proposal]))[0]
 
 
 @router.post("/{proposal_id}/approve")

@@ -12,7 +12,7 @@ only. Never paste them into a chat, an issue or a commit.
 |---|---|
 | 1. Prepare Windows | WSL2 + Ubuntu, Docker with your GPU, Tailscale, Jarvis running, boot task |
 | 2. First sign-in | Your passkey and recovery codes; Jarvis on your phone's home screen |
-| 3. Google (Gmail + Calendar) | Read-only Gmail and Calendar access, for learning your style and schedule |
+| 3. Google (Gmail + Calendar) | Jarvis reads and sorts your email, drafts replies, and sends only after you approve |
 | 4. AI keys | Groq (private-safe cloud models) and Gemini (public data only) |
 | 5. Optional sources | GitHub, your website, your CV or LinkedIn export |
 | 6. Voice | Talk to Jarvis in the app; "Hey Jarvis" on the PC |
@@ -159,9 +159,22 @@ prints.
 
 ## Step 3: Google (Gmail and Calendar)
 
-For now Jarvis only **reads**: your sent mail (to learn your writing style) and
-your calendar (to learn your routines). Sending email arrives in Phase 3, and
-even then only with your approval.
+What Jarvis does with this access:
+
+- **Reads and sorts** your inbox every minute: needs attention, leads,
+  invoices, FYI, newsletters and suspicious, each with a short summary and any
+  tasks and dates.
+- **Drafts replies** in your style: on its own only for people you know, and
+  whenever you ask.
+- **Sends only after you approve**, then waits 60 seconds so you can undo.
+- **Never deletes or archives your email.** The only thing it removes is its
+  own copy of a draft, once that reply is sent. Google's permission doesn't
+  allow permanent deletion anyway.
+- Once autonomy is on (step 8), it also adds `Jarvis/…` labels in Gmail, keeps
+  a copy of each draft in your Gmail drafts, and adds a private calendar hold
+  when you tap **Add to calendar**.
+- It also learns your writing style from your sent mail, and your routines
+  from your calendar.
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com), signed
    in with the Gmail account Jarvis should use, and **create a project** named
@@ -171,11 +184,13 @@ even then only with your approval.
 3. **Google Auth Platform (OAuth consent screen):**
    1. App name "Jarvis", with your own email as the support and developer
       contact. Audience: **External**.
-   2. **Data access / Scopes:** add `…/auth/gmail.readonly` and
-      `…/auth/calendar.readonly`.
+   2. **Data access / Scopes:** add `…/auth/gmail.modify`,
+      `…/auth/calendar.readonly` and `…/auth/calendar.events`. Google calls
+      the Gmail one "restricted". That's fine for an app only you use: an app
+      with fewer than 100 users doesn't need Google's verification.
    3. **Audience:** click **Publish app** so the status is **In production**.
       This matters: in "Testing" status Google expires your sign-in every
-      7 days. You don't need Google's verification for an app only you use.
+      7 days.
 4. **Clients > Create client**, with application type **Desktop app** and the
    name "Jarvis on my PC". Copy the **Client ID** and **Client secret**.
 5. In Ubuntu, add them to `~/Jarvis/.env` and restart Jarvis:
@@ -190,14 +205,35 @@ even then only with your approval.
 6. **On the PC itself** (not your phone), open Jarvis > **Sources** >
    **Connect Google**.
    - Google shows "Google hasn't verified this app". That's expected for your
-     own app: click **Advanced > Go to Jarvis (unsafe)** and allow read-only
-     access.
+     own app: click **Advanced > Go to Jarvis (unsafe)**.
+   - **Tick every box** on the next screen. If you leave some unticked, Jarvis
+     works with what you gave it (with read-only Gmail it sorts and
+     summarises, but can't draft or send), and Sources offers **Give Jarvis
+     your inbox** to add the rest later.
    - Google then sends you back to `http://127.0.0.1:8080/...`, which only
      works on the PC. That's why this step happens there.
+
+**Connected Google before Phase 3?** Add the three scopes in step 3.2, then
+in Sources choose **Give Jarvis your inbox**. Google asks only for what's new.
+
+Within a few minutes the **Inbox** shows the last 14 days of your email.
+`make doctor` says what Jarvis may do with your Gmail and when it last
+checked.
+
+`config/email.yaml` holds the email settings (`make restart` after editing):
+
+- how far back the first read goes (14 days)
+- how long Jarvis keeps email text (90 days; it stays in Gmail, and Jarvis
+  fetches it again when you open the email)
+- who gets replies drafted automatically (people you know)
+- who can trigger an instant alert (people you know, never in quiet hours)
+- the digest times (07:15 and 17:30)
 
 Jarvis stores the Google tokens encrypted with `JARVIS_SECRET_KEY`. You can
 disconnect in Sources at any time, and also remove access at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+Changing your Google password also removes it: Jarvis tells you once, and you
+connect again in Sources.
 
 ---
 

@@ -406,3 +406,120 @@ class OAuthPending(Base):
     redirect_uri: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TZ)
     expires_at: Mapped[datetime] = mapped_column(TZ)
+
+
+# --- Email ------------------------------------------------------------------------
+# Anything that carries what an email *says* (subjects, names, snippets, bodies,
+# Jarvis's summaries) is encrypted with JARVIS_SECRET_KEY (`*_enc` columns).
+# Addresses, dates and labels stay plain, for matching and queries.
+
+
+class MailThread(Base):
+    """A Gmail conversation, and how Jarvis sorted it."""
+
+    __tablename__ = "mail_threads"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # Gmail thread id
+    subject_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    participants: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    last_message_at: Mapped[datetime] = mapped_column(TZ, index=True)
+    last_inbound_id: Mapped[str | None] = mapped_column(String(64))
+    in_inbox: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    unread: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str | None] = mapped_column(String(16), index=True)
+    priority: Mapped[int | None] = mapped_column(Integer)
+    needs_reply: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    details_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # tasks and dates (JSON)
+    signals: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    triaged_message_id: Mapped[str | None] = mapped_column(String(64))
+    triaged_at: Mapped[datetime | None] = mapped_column(TZ)
+    triage_model: Mapped[str | None] = mapped_column(String(64))
+    owner_category: Mapped[str | None] = mapped_column(String(16))
+    owner_checked_at: Mapped[datetime | None] = mapped_column(TZ)
+    replied_at: Mapped[datetime | None] = mapped_column(TZ)
+    alerted_at: Mapped[datetime | None] = mapped_column(TZ)
+    updated_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class MailMessage(Base):
+    """One email in a thread. `direction` is "in" (to you) or "out" (from you)."""
+
+    __tablename__ = "mail_messages"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # Gmail message id
+    thread_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("mail_threads.id", ondelete="CASCADE"), index=True
+    )
+    history_id: Mapped[int] = mapped_column(BigInteger)
+    internal_date: Mapped[datetime] = mapped_column(TZ, index=True)
+    direction: Mapped[str] = mapped_column(String(3))
+    label_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    from_address: Mapped[str] = mapped_column(String(320), index=True)
+    to_addresses: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    cc_addresses: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    reply_to: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    names_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # {address: display name}
+    subject_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    snippet_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    body_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    attachments_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # file names (JSON)
+    has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
+    message_id_header: Mapped[str | None] = mapped_column(Text)
+    references: Mapped[str | None] = mapped_column(Text)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # headers Jarvis checks
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    fetched_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class MailContact(Base):
+    """Someone you've exchanged email with: "known" once you've written to them."""
+
+    __tablename__ = "mail_contacts"
+
+    address: Mapped[str] = mapped_column(String(320), primary_key=True)
+    first_seen: Mapped[datetime] = mapped_column(TZ)
+    last_seen: Mapped[datetime] = mapped_column(TZ)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0)
+    received_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class MailDraft(Base):
+    """A reply Jarvis drafted: its send proposal, and its copy in Gmail's drafts."""
+
+    __tablename__ = "mail_drafts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    thread_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("mail_threads.id", ondelete="CASCADE"), index=True
+    )
+    reply_to_message_id: Mapped[str | None] = mapped_column(String(64))
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("action_proposals.id", ondelete="SET NULL")
+    )
+    content_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # to, cc, subject, body (JSON)
+    original_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # Jarvis's first version
+    original_hash: Mapped[str | None] = mapped_column(String(64))  # of that version's body
+    gmail_draft_id: Mapped[str | None] = mapped_column(String(64))
+    gmail_body_hash: Mapped[str | None] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(8))  # "auto", "owner" (the app) or "chat"
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    sent_message_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TZ)
+    updated_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class MailVerdict(Base):
+    """Your word on how an email was sorted ("Is this right?"): what `make eval` scores against."""
+
+    __tablename__ = "mail_verdicts"
+
+    message_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("mail_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    thread_id: Mapped[str] = mapped_column(String(64), index=True)
+    category: Mapped[str] = mapped_column(String(16))  # yours
+    jarvis_category: Mapped[str | None] = mapped_column(String(16))  # what triage had said
+    decided_at: Mapped[datetime] = mapped_column(TZ)

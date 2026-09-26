@@ -20,8 +20,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jarvis.db.models import ActionProposal
+from jarvis.mail.preview import email_preview
 from jarvis.policy.config import PoliciesConfig
 from jarvis.policy.types import Channel, Risk, Status
+from jarvis.security.scanners import redact_text
 from jarvis.voice.config import VoiceConfig, normalize_phrase
 
 # Words people wrap around a command: "Jarvis, confirm please" means "confirm".
@@ -86,6 +88,25 @@ async def new_pending_proposals(
     return list(rows)
 
 
+def spoken_details(proposal: ActionProposal) -> str:
+    """For an email: who else gets it and how it starts. Plus any warning to hear first."""
+    parts: list[str] = []
+    preview = email_preview(proposal.kind, proposal.payload)
+    if preview is not None:
+        if preview.cc:
+            others = " and others" if len(preview.cc) > 3 else ""
+            parts.append(f"Copying {', '.join(preview.cc[:3])}{others}.")
+        if preview.bcc:
+            parts.append("With blind copies.")
+        if preview.first_line:
+            line, _ = redact_text(preview.first_line, placeholder="something private")
+            parts.append(f"It says: “{line}”")
+    warnings = [c for c in proposal.validation or [] if c.get("outcome") == "warn"]
+    if warnings:
+        parts.append(f"Heads up: {str(warnings[0].get('message', '')).rstrip('.')}.")
+    return "".join(f" {part}" for part in parts)
+
+
 def read_back(
     proposals: list[ActionProposal], policies: PoliciesConfig, config: VoiceConfig, now: datetime
 ) -> tuple[str, PendingConfirmation | None]:
@@ -106,5 +127,8 @@ def read_back(
         summary=first.summary,
         expires_at=now + timedelta(seconds=config.conversation.confirmation_seconds),
     )
-    speech = f"To confirm: {first.summary}. Say “{confirm}” to go ahead, or “{cancel}”.{more}"
+    details = spoken_details(first)
+    speech = (
+        f"To confirm: {first.summary}.{details} Say “{confirm}” to go ahead, or “{cancel}”.{more}"
+    )
     return speech, pending

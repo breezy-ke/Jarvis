@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import stat
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -15,7 +16,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from jarvis import doctor
 from jarvis.cli import fill_env_file, generate_secrets, local_model_ids, main
 from jarvis.config import REPO_ROOT, Settings
+from jarvis.ingestion.google import CALENDAR_EVENTS, GMAIL_MODIFY, GMAIL_READONLY, GoogleConnection
 from jarvis.llm.config import parse_models_config
+from jarvis.mail.sync import SyncState
 from jarvis.voice.speech import SpeechStatus
 
 REPO_CONFIG = REPO_ROOT / "config"
@@ -177,6 +180,75 @@ def test_repo_configs_pass_the_doctor() -> None:
     checks, models = doctor.check_configs(settings)
     assert models is not None
     assert [c.status for c in checks] == [doctor.OK, doctor.OK]
+
+
+def test_the_doctor_checks_email_yaml(tmp_path: Path) -> None:
+    ok = doctor.check_email_config(Settings(JARVIS_CONFIG_DIR=REPO_CONFIG))
+    assert (ok.status, ok.title) == (doctor.OK, "email.yaml")
+    assert ok.detail == (
+        "auto-drafts for people you know, urgent alerts from people you know, "
+        "digests 07:15 and 17:30"
+    )
+    broken = tmp_path / "email.yaml"
+    broken.write_text("version: 1\ndrafting:\n  auto_draft: always\n")
+    bad = doctor.check_email_config(Settings(JARVIS_EMAIL_FILE=broken))
+    assert bad.status == doctor.FAIL
+    assert "auto_draft" in bad.detail
+    assert "refuses to start" in bad.fix
+
+
+NOW = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
+FULL = GoogleConnection(True, "owner@example.com", f"openid {GMAIL_MODIFY} {CALENDAR_EVENTS}")
+
+
+def synced(ago: timedelta, **state: str) -> SyncState:
+    return SyncState(**{"status": "ok", "last_sync_at": (NOW - ago).isoformat(), **state})
+
+
+def test_the_doctor_says_what_jarvis_may_do_with_gmail() -> None:
+    fresh = synced(timedelta(minutes=1))
+    assert [(c.status, c.title) for c in doctor.email_checks(FULL, fresh, NOW)] == [
+        (doctor.OK, "Gmail access"),
+        (doctor.OK, "Calendar holds"),
+        (doctor.OK, "Email sync"),
+    ]
+    [unconnected] = doctor.email_checks(GoogleConnection(False), SyncState(), NOW)
+    assert (unconnected.status, unconnected.title) == (doctor.WARN, "Gmail")
+    assert "Connect Google" in unconnected.fix
+
+    read_only = GoogleConnection(True, "owner@example.com", f"openid {GMAIL_READONLY}")
+    access, holds, _ = doctor.email_checks(read_only, fresh, NOW)
+    assert (access.status, holds.status) == (doctor.WARN, doctor.WARN)
+    assert "can't label, draft or send" in access.detail
+    assert "Give Jarvis your inbox" in access.fix
+    assert "allow calendar events" in holds.fix
+
+    [no_gmail] = doctor.email_checks(GoogleConnection(True, "o@example.com", "openid"), fresh, NOW)
+    assert no_gmail.status == doctor.FAIL
+
+
+@pytest.mark.parametrize(
+    ("state", "status", "says"),
+    [
+        (synced(timedelta(seconds=90)), doctor.OK, "last check 1 minute ago"),
+        (SyncState(status="off"), doctor.WARN, "hasn't read your inbox yet"),
+        (synced(timedelta(hours=3)), doctor.WARN, "last check 3 hours ago"),
+        (synced(timedelta(days=9)), doctor.WARN, "last check 9 days ago. Gmail keeps"),
+        (
+            synced(timedelta(minutes=5), status="error", error="ConnectError: no route"),
+            doctor.WARN,
+            "the last check failed (ConnectError: no route); the last good one was 5 minutes ago",
+        ),
+        (synced(timedelta(minutes=1), status="reconnect"), doctor.FAIL, "changing your password"),
+    ],
+)
+def test_the_doctor_says_whether_email_is_keeping_up(
+    state: SyncState, status: str, says: str
+) -> None:
+    check = doctor.email_checks(FULL, state, NOW)[-1]
+    assert check.title == "Email sync"
+    assert check.status == status
+    assert says in check.detail
 
 
 def test_doctor_flags_a_training_provider_allowed_personal_data() -> None:

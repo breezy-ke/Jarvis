@@ -1,8 +1,10 @@
-"""Google OAuth (installed-app flow with PKCE), plus read-only Gmail and Calendar.
+"""Google OAuth (installed-app flow with PKCE), plus Gmail and Calendar reads.
 
-Phase 1 asks only for read-only scopes. Jarvis *cannot* send mail or change
-your calendar until Phase 3 asks for more, and then only through the policy
-engine. Tokens are stored encrypted with JARVIS_SECRET_KEY.
+Connecting asks for Gmail and Calendar access (`EMAIL_SCOPES`). Google lets
+you untick any of them, so Jarvis works with whatever you grant: with read-only
+Gmail it sorts and summarises; with `gmail.modify` it can also label, draft and
+send, and even then only through the policy engine, with your approval.
+Tokens are stored encrypted with JARVIS_SECRET_KEY.
 
 The OAuth redirect is a loopback address (http://127.0.0.1:8080/...), as
 Google requires for Desktop clients, so connect Google from a browser on
@@ -28,6 +30,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jarvis.clock import Clock
+from jarvis.config import Settings
 from jarvis.db.models import OAuthPending, OAuthToken
 from jarvis.security.crypto import Vault
 
@@ -36,11 +39,36 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 (a URL, not a se
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 CALENDAR = "https://www.googleapis.com/calendar/v3"
-READONLY_SCOPES = (
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar.readonly",
-)
+GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
+CALENDAR_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
+CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events"
+READONLY_SCOPES = (GMAIL_READONLY, CALENDAR_READONLY)
+# Phase 3: read, label, draft and send mail (never delete), and add calendar holds.
+EMAIL_SCOPES = (GMAIL_MODIFY, CALENDAR_READONLY, CALENDAR_EVENTS)
 PROVIDER = "google"
+
+
+@dataclass(frozen=True)
+class GoogleEndpoints:
+    """Where Google lives. Tests point these at a fake server (JARVIS_GOOGLE_FAKE_BASE)."""
+
+    auth: str = AUTH_URL
+    token: str = TOKEN_URL
+    revoke: str = REVOKE_URL
+    gmail: str = GMAIL
+    calendar: str = CALENDAR
+
+    @classmethod
+    def fake(cls, base: str) -> GoogleEndpoints:
+        base = base.rstrip("/")
+        return cls(
+            auth=f"{base}/o/oauth2/v2/auth",
+            token=f"{base}/token",
+            revoke=f"{base}/revoke",
+            gmail=f"{base}/gmail/v1/users/me",
+            calendar=f"{base}/calendar/v3",
+        )
 
 
 class GoogleError(RuntimeError):
@@ -53,8 +81,43 @@ class GoogleConnection:
     account_email: str | None = None
     scopes: str | None = None
 
+    def granted(self, scope: str) -> bool:
+        return self.connected and scope in (self.scopes or "").split()
+
+    @property
+    def mail_access(self) -> str:
+        """ "full" (read, label, draft, send), "read", or "none"."""
+        if self.granted(GMAIL_MODIFY):
+            return "full"
+        if self.granted(GMAIL_READONLY):
+            return "read"
+        return "none"
+
+    @property
+    def can_add_holds(self) -> bool:
+        return self.granted(CALENDAR_EVENTS)
+
 
 class GoogleAuth:
+    @classmethod
+    def from_settings(
+        cls, settings: Settings, *, vault: Vault, clock: Clock, http: httpx.AsyncClient
+    ) -> GoogleAuth:
+        """The Google connection `.env` describes (a fake Google in tests)."""
+        return cls(
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret.get_secret_value()
+            if settings.google_client_secret
+            else None,
+            redirect_uri=settings.google_redirect_uri,
+            vault=vault,
+            clock=clock,
+            http=http,
+            endpoints=GoogleEndpoints.fake(settings.google_fake_base)
+            if settings.google_fake_base
+            else None,
+        )
+
     def __init__(
         self,
         *,
@@ -64,6 +127,7 @@ class GoogleAuth:
         vault: Vault,
         clock: Clock,
         http: httpx.AsyncClient,
+        endpoints: GoogleEndpoints | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
@@ -71,6 +135,7 @@ class GoogleAuth:
         self._vault = vault
         self._clock = clock
         self._http = http
+        self.endpoints = endpoints or GoogleEndpoints()
 
     @property
     def configured(self) -> bool:
@@ -83,9 +148,7 @@ class GoogleAuth:
             )
         return self._client_id, self._client_secret
 
-    async def start(
-        self, session: AsyncSession, *, scopes: tuple[str, ...] = READONLY_SCOPES
-    ) -> str:
+    async def start(self, session: AsyncSession, *, scopes: tuple[str, ...] = EMAIL_SCOPES) -> str:
         client_id, _ = self._require()
         now = self._clock.now()
         await session.execute(delete(OAuthPending).where(OAuthPending.expires_at < now))
@@ -116,7 +179,7 @@ class GoogleAuth:
             "code_challenge": challenge.decode(),
             "code_challenge_method": "S256",
         }
-        return f"{AUTH_URL}?{urlencode(params)}"
+        return f"{self.endpoints.auth}?{urlencode(params)}"
 
     async def finish(self, session: AsyncSession, *, state: str, code: str) -> GoogleConnection:
         client_id, client_secret = self._require()
@@ -128,7 +191,7 @@ class GoogleAuth:
             raise GoogleError("This sign-in link expired. Start again.")
         verifier = self._vault.decrypt_str(pending.code_verifier_encrypted)
         resp = await self._http.post(
-            TOKEN_URL,
+            self.endpoints.token,
             data={
                 "client_id": client_id,
                 "client_secret": client_secret,
@@ -154,7 +217,7 @@ class GoogleAuth:
 
     async def _account_email(self, access_token: str) -> str | None:
         resp = await self._http.get(
-            f"{GMAIL}/profile", headers={"Authorization": f"Bearer {access_token}"}
+            f"{self.endpoints.gmail}/profile", headers={"Authorization": f"Bearer {access_token}"}
         )
         return resp.json().get("emailAddress") if resp.status_code == 200 else None
 
@@ -193,7 +256,7 @@ class GoogleAuth:
         if expires_at - timedelta(minutes=2) > self._clock.now():
             return str(token["access_token"])
         resp = await self._http.post(
-            TOKEN_URL,
+            self.endpoints.token,
             data={
                 "client_id": client_id,
                 "client_secret": client_secret,
@@ -221,7 +284,9 @@ class GoogleAuth:
         token = json.loads(self._vault.decrypt_str(row.token_encrypted))
         # Revoking is best effort: the local token is deleted regardless.
         with contextlib.suppress(httpx.HTTPError):
-            await self._http.post(REVOKE_URL, params={"token": token.get("refresh_token", "")})
+            await self._http.post(
+                self.endpoints.revoke, params={"token": token.get("refresh_token", "")}
+            )
         await session.delete(row)
 
 
@@ -248,7 +313,7 @@ def message_text(payload: dict[str, Any]) -> str:
 
 
 async def fetch_sent_bodies(
-    http: httpx.AsyncClient, access_token: str, *, limit: int = 200
+    http: httpx.AsyncClient, access_token: str, *, limit: int = 200, gmail: str = GMAIL
 ) -> list[str]:
     headers = {"Authorization": f"Bearer {access_token}"}
     ids: list[str] = []
@@ -260,7 +325,7 @@ async def fetch_sent_bodies(
         }
         if page:
             params["pageToken"] = page
-        resp = await http.get(f"{GMAIL}/messages", headers=headers, params=params)
+        resp = await http.get(f"{gmail}/messages", headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
         ids.extend(m["id"] for m in data.get("messages", []))
@@ -270,7 +335,7 @@ async def fetch_sent_bodies(
     bodies: list[str] = []
     for message_id in ids[:limit]:
         resp = await http.get(
-            f"{GMAIL}/messages/{message_id}", headers=headers, params={"format": "full"}
+            f"{gmail}/messages/{message_id}", headers=headers, params={"format": "full"}
         )
         if resp.status_code == 200:
             text = message_text(resp.json().get("payload", {}))
@@ -280,10 +345,15 @@ async def fetch_sent_bodies(
 
 
 async def fetch_calendar_events(
-    http: httpx.AsyncClient, access_token: str, *, start: datetime, end: datetime
+    http: httpx.AsyncClient,
+    access_token: str,
+    *,
+    start: datetime,
+    end: datetime,
+    calendar: str = CALENDAR,
 ) -> list[dict[str, Any]]:
     resp = await http.get(
-        f"{CALENDAR}/calendars/primary/events",
+        f"{calendar}/calendars/primary/events",
         headers={"Authorization": f"Bearer {access_token}"},
         params={
             "timeMin": start.isoformat(),

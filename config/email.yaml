@@ -1,0 +1,34 @@
+# Jarvis email settings
+# ---------------------------------------------------------------------------
+# How Jarvis reads, sorts and drafts your Gmail. Nothing is ever sent without
+# your approval (config/policies.yaml: email.send). `make restart` applies
+# changes; `make doctor` checks this file.
+version: 1
+
+sync:
+  # How often Jarvis checks Gmail for changes.
+  interval_seconds: 60
+  # How far back the first sync reads your inbox and sent mail.
+  first_sync_days: 14
+  # Email text older than this is removed from Jarvis's database. It stays in
+  # Gmail, and Jarvis fetches it again if you open the thread.
+  body_retention_days: 90
+
+drafting:
+  # When Jarvis drafts replies on its own (you still approve every send):
+  #   known - for people you've emailed before, and your VIPs
+  #   all   - for every email that needs a reply
+  #   off   - only when you ask
+  auto_draft: known
+
+alerts:
+  # Instant alerts for urgent email. Never during quiet hours (policies.yaml).
+  #   known - only from people you know, so a scammer can't make your phone buzz
+  #   all   - from anyone
+  #   off   - digests only
+  urgent: known
+  max_per_hour: 6
+
+digests:
+  # Inbox digests, in your timezone (policies.yaml). An empty list turns them off.
+  times: ["07:15", "17:30"]

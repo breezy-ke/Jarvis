@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jarvis.db.session import transaction
 from jarvis.services import Services
+
+if TYPE_CHECKING:
+    from jarvis.mail.service import MailService
 
 
 @dataclass
@@ -16,6 +19,10 @@ class AgentDeps:
     actor: str
     conversation_id: uuid.UUID | None = None
     redact_sensitive: bool = False  # on channels that aren't end-to-end encrypted
+    mail: MailService | None = None  # None when email isn't set up
+    # Someone else's words (an email, a forwarded message) are in the model's context.
+    # Then memory stays as it is and every proposal waits for the owner.
+    read_untrusted: bool = False
 
 
 async def audit_tool(

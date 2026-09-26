@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -16,35 +15,9 @@ from jarvis.memory.retrieval import render_facts, search_episodes, search_facts
 from jarvis.memory.store import FactInput, FactStatus, MemoryStore, MemoryStoreError
 from jarvis.profile.schema import REQUIRED_FIELDS, PathError, Profile
 from jarvis.profile.service import ProfileService, SignOffError, completeness, core_summary
+from tests.profile_helpers import FULL_PROFILE
 
 pytestmark = pytest.mark.db
-
-FULL_PROFILE: dict[str, Any] = {
-    "identity.preferred_name": "Brian",
-    "identity.location": "Nairobi, Kenya",
-    "identity.timezone": "Africa/Nairobi",
-    "business.name": "Breezy Digital",
-    "business.services": ["Web design", "Web apps"],
-    "business.rate_card": [{"service": "Landing page", "price": "80000", "currency": "KES"}],
-    "clients.ideal_clients": [
-        {"play": "ea_smes", "description": "Nairobi SMEs with outdated sites"}
-    ],
-    "portfolio.highlights": [{"title": "Clinic site", "summary": "Booking + SEO"}],
-    "engineering.primary_stacks": ["Next.js", "Laravel"],
-    "engineering.conventions": ["TypeScript strict"],
-    "design.style_keywords": ["minimal"],
-    "design.liked_references": ["linear.app: calm typography"],
-    "communication.tone": "warm and concise",
-    "communication.sign_off": "Best regards",
-    "schedule.working_hours": "Mon-Fri 08:00-18:00",
-    "goals.business_goals": ["3 new retainers this quarter"],
-    "people.contacts": [
-        {"name": "Achieng", "email": "Achieng@Client.co.ke", "relationship": "client", "vip": True}
-    ],
-    "boundaries.always_ask_before": ["sending any email"],
-    "boundaries.never_do": ["pay anyone"],
-    "assistant.personality": "dry British wit",
-}
 
 
 @pytest.fixture

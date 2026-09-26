@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
 from jarvis.api import actions, auth, chat, onboarding, profile, system
+from jarvis.api import mail as mail_api
 from jarvis.api import telegram as telegram_api
 from jarvis.api import voice as voice_api
 from jarvis.api.deps import AppState
@@ -28,6 +29,8 @@ from jarvis.db.migrate import run_migrations
 from jarvis.db.session import SessionFactory, create_engine, create_session_factory, transaction
 from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
+from jarvis.mail.config import load_email_config
+from jarvis.mail.service import MailService
 from jarvis.onboarding.service import OnboardingService
 from jarvis.services import Services, build_services
 from jarvis.telegram.bot import build_telegram_bot
@@ -91,6 +94,7 @@ def create_app(
     *,
     services_factory: ServicesFactory | None = None,
     run_background: bool = True,
+    http_transport: httpx.AsyncBaseTransport | None = None,  # tests: a fake Google
 ) -> FastAPI:
     settings = settings or get_settings()
     logging.basicConfig(
@@ -99,6 +103,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        email_config = load_email_config(settings.email_config_path)  # invalid: say why and stop
         configure_tracing(settings)
         engine = create_engine(settings.database_url)
         if settings.auto_migrate:
@@ -106,21 +111,18 @@ def create_app(
         session_factory = create_session_factory(engine)
         factory = services_factory or build_services
         services = factory(settings, session_factory)
-        http = httpx.AsyncClient(timeout=20.0, headers={"User-Agent": "Jarvis/0.1"})
-        google = GoogleAuth(
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret.get_secret_value()
-            if settings.google_client_secret
-            else None,
-            redirect_uri=settings.google_redirect_uri,
-            vault=services.vault,
-            clock=services.clock,
-            http=http,
+        http = httpx.AsyncClient(
+            timeout=20.0, headers={"User-Agent": "Jarvis/0.1"}, transport=http_transport
+        )
+        google = GoogleAuth.from_settings(
+            settings, vault=services.vault, clock=services.clock, http=http
         )
         auth_service = AuthService(settings=settings, audit=services.audit, clock=services.clock)
         voice = build_voice_runtime(settings, services)
-        chat_service = ChatService(services)
+        mail = MailService(services, google=google, http=http, config=email_config)
+        chat_service = ChatService(services, mail=mail)
         telegram = build_telegram_bot(settings, services, chat=chat_service, voice=voice)
+        mail.notifier.telegram = telegram
         app.state.jarvis = AppState(
             services=services,
             auth=auth_service,
@@ -131,6 +133,7 @@ def create_app(
             http=http,
             voice=voice,
             telegram=telegram,
+            mail=mail,
         )
 
         async with transaction(session_factory) as session:
@@ -142,10 +145,11 @@ def create_app(
 
         stop = asyncio.Event()
         background: list[asyncio.Task[None]] = []
-        scheduler = Scheduler(services)
+        scheduler = Scheduler(services, mail=mail)
         preparing = asyncio.create_task(voice.prepare())
         if run_background:
             background.append(asyncio.create_task(executor_loop(services, stop)))
+            background.append(asyncio.create_task(mail.run(stop)))
             if telegram is not None:
                 background.append(asyncio.create_task(telegram.run(stop)))
             if settings.enable_scheduler:
@@ -210,7 +214,17 @@ def create_app(
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
-    for module in (auth, chat, actions, system, profile, onboarding, voice_api, telegram_api):
+    for module in (
+        auth,
+        chat,
+        actions,
+        system,
+        profile,
+        onboarding,
+        voice_api,
+        telegram_api,
+        mail_api,
+    ):
         app.include_router(module.router)
 
     dist = settings.web_dist_dir

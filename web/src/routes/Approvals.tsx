@@ -9,8 +9,9 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
+import { EmailPreview } from "@/components/EmailPreview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { keys } from "@/lib/queries";
 import type { Action, Validation } from "@/lib/types";
+import { useCountdown } from "@/lib/useCountdown";
 import { shortHash, timeAgo } from "@/lib/utils";
 import { confirmWithPasskey } from "@/lib/webauthn";
 
@@ -91,15 +93,7 @@ function ActionList({ view }: { view: "open" | "history" }) {
   );
 }
 
-function useCountdown(target: string | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!target) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [target]);
-  return target ? Math.max(0, Math.ceil((new Date(target).getTime() - now) / 1000)) : 0;
-}
+const EMAIL_KINDS = new Set(["email.send", "email.draft"]);
 
 function ValidationRow({ check }: { check: Validation }) {
   const icon =
@@ -177,6 +171,9 @@ function ActionCard({ action }: { action: Action }) {
       <CardContent className="space-y-3">
         {action.status_reason ? (
           <Alert tone={pending ? "warning" : "info"}>{action.status_reason}</Alert>
+        ) : null}
+        {EMAIL_KINDS.has(action.kind) ? (
+          <EmailPreview payload={action.payload} email={action.email} />
         ) : null}
         {action.validation.length ? (
           <ul className="space-y-1" aria-label="Safety checks">

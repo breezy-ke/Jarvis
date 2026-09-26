@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Play, Unplug, Upload } from "lucide-react";
+import { ExternalLink, Inbox, Play, RefreshCw, Unplug, Upload } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Alert, Skeleton } from "@/components/ui/misc";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { keys } from "@/lib/queries";
+import { keys, useMailStatus } from "@/lib/queries";
 import type { GoogleStatus, IngestionSource } from "@/lib/types";
 import { timeAgo } from "@/lib/utils";
 
@@ -60,9 +60,18 @@ function GoogleCard() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: keys.google });
       void queryClient.invalidateQueries({ queryKey: keys.sources });
+      void queryClient.invalidateQueries({ queryKey: keys.mail });
+    },
+  });
+  const { data: mail } = useMailStatus();
+  const checkNow = useMutation({
+    mutationFn: () => api.post("/api/mail/sync"),
+    onSuccess: () => {
+      window.setTimeout(() => void queryClient.invalidateQueries({ queryKey: keys.mail }), 3_000);
     },
   });
   if (!data) return null;
+  const partial = data.connected && (data.mail_access !== "full" || !data.can_add_holds);
   return (
     <Card>
       <CardHeader>
@@ -75,8 +84,8 @@ function GoogleCard() {
           )}
         </CardTitle>
         <CardDescription>
-          Read-only for now: I can't send email or change your calendar until the email phase, and
-          even then only with your approval.
+          I read and sort your mail, draft replies in your voice and add private holds to your
+          calendar. Nothing is ever sent without your approval, and I can't delete anything.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
@@ -86,7 +95,34 @@ function GoogleCard() {
             <code>.env</code> (docs/setup.md, step 3), then restart Jarvis.
           </Alert>
         ) : data.connected ? (
-          <p>Connected as {data.account_email ?? "your Google account"}.</p>
+          <>
+            <p>Connected as {data.account_email ?? "your Google account"}.</p>
+            <ul className="space-y-1" aria-label="What Jarvis may do">
+              <li>
+                Mail:{" "}
+                {data.mail_access === "full"
+                  ? "read, sort, label, draft, and send once you approve"
+                  : data.mail_access === "read"
+                    ? "read and sort only (no drafts or sending)"
+                    : "not allowed"}
+              </li>
+              <li>Calendar holds: {data.can_add_holds ? "allowed" : "not allowed"}</li>
+              {mail && mail.access !== "none" ? (
+                <li>
+                  Last checked {timeAgo(mail.sync.last_sync_at)}
+                  {mail.sync.status === "reconnect" || mail.sync.status === "error"
+                    ? `: ${mail.sync.error ?? "couldn't reach Gmail"}`
+                    : ""}
+                </li>
+              ) : null}
+            </ul>
+            {partial ? (
+              <Alert tone="info">
+                On Google's screen some permissions were left unticked. Connect again and allow them
+                all to let me draft, send (with your approval) and hold calendar time.
+              </Alert>
+            ) : null}
+          </>
         ) : (
           <Alert tone="info">
             Connect from a browser <strong>on the PC running Jarvis</strong>: Google sends you back
@@ -95,15 +131,31 @@ function GoogleCard() {
         )}
         {connect.error ? <Alert tone="error">{connect.error.message}</Alert> : null}
       </CardContent>
-      <CardFooter>
+      <CardFooter className="flex-wrap">
         {data.connected ? (
-          <Button
-            variant="outline"
-            onClick={() => disconnect.mutate()}
-            disabled={disconnect.isPending}
-          >
-            <Unplug /> Disconnect
-          </Button>
+          <>
+            {partial ? (
+              <Button onClick={() => connect.mutate()} disabled={connect.isPending}>
+                <Inbox /> Give Jarvis your inbox
+              </Button>
+            ) : null}
+            {data.mail_access !== "none" ? (
+              <Button
+                variant="outline"
+                onClick={() => checkNow.mutate()}
+                disabled={checkNow.isPending}
+              >
+                <RefreshCw /> Check now
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              onClick={() => disconnect.mutate()}
+              disabled={disconnect.isPending}
+            >
+              <Unplug /> Disconnect
+            </Button>
+          </>
         ) : (
           <Button onClick={() => connect.mutate()} disabled={!data.configured || connect.isPending}>
             <ExternalLink /> Connect Google

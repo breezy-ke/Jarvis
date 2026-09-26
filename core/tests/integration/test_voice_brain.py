@@ -100,7 +100,10 @@ async def test_an_action_is_read_back_and_approved_by_voice(services: Services) 
     frames = await run_brain(services, [turn(request), turn("Jarvis, confirm please.")], state)
 
     said = spoken(frames)
-    assert "To confirm: Invite to Kickoff. Say “confirm” to go ahead, or “cancel”." in said
+    assert (
+        "To confirm: Invite to Kickoff. Heads up: New recipient(s), check carefully: "
+        "a@acme.co.ke. Say “confirm” to go ahead, or “cancel”."
+    ) in said
     assert "Approved." in said
     async with services.session_factory() as session:
         proposal = (await session.scalars(select(ActionProposal))).one()
