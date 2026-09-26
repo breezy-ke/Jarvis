@@ -459,6 +459,24 @@ class FakeGmail:
                 {"id": stored["id"], "threadId": stored["threadId"], "labelIds": ["SENT"]}
             )
 
+        # For browser tests: what actually went out (never part of Google's API)
+        @app.get("/__test/sent")
+        async def sent_mail() -> JSONResponse:
+            items = [m for m in fake.messages.values() if m.get("via_api")]
+            return JSONResponse(
+                {
+                    "count": len(items),
+                    "messages": [
+                        {
+                            "id": m["id"],
+                            "threadId": m["threadId"],
+                            "to": str(message_from_bytes(m["raw"])["To"]),
+                        }
+                        for m in items
+                    ],
+                }
+            )
+
         # Calendar
         @app.post("/calendar/v3/calendars/primary/events")
         async def insert_event(request: Request) -> JSONResponse:

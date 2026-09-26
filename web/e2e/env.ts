@@ -3,6 +3,9 @@ import { randomBytes } from "node:crypto";
 export const port = Number(process.env.E2E_PORT ?? 8766);
 export const baseURL = `http://localhost:${port}`;
 const speechPort = Number(process.env.E2E_SPEECH_PORT ?? 8767);
+const googlePort = Number(process.env.E2E_GOOGLE_PORT ?? 8768);
+// A fake Google (sign-in, Gmail, Calendar) with a few emails waiting (see e2e_server.py).
+export const fakeGoogle = `http://127.0.0.1:${googlePort}`;
 
 // The browser's fake microphone plays this recording once ("What is on my calendar today?").
 export const fakeMicrophone = new URL(
@@ -34,6 +37,11 @@ export const serverEnv: Record<string, string> = {
   // A fake speech server stands in for faster-whisper and Kokoro (see e2e_server.py).
   E2E_SPEECH_PORT: String(speechPort),
   SPEECH_BASE_URL: `http://127.0.0.1:${speechPort}/v1`,
+  E2E_GOOGLE_PORT: String(googlePort),
+  JARVIS_GOOGLE_FAKE_BASE: fakeGoogle,
+  GOOGLE_OAUTH_CLIENT_ID: "e2e-client",
+  GOOGLE_OAUTH_CLIENT_SECRET: "e2e-fake",
+  GOOGLE_OAUTH_REDIRECT_URI: `${baseURL}/api/integrations/google/callback`,
   JARVIS_ENABLE_SCHEDULER: "false",
   JARVIS_LOG_LEVEL: "WARNING",
   DATABASE_URL:

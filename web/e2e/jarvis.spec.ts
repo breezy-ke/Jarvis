@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
-import { serverEnv } from "./env";
+import { fakeGoogle, serverEnv } from "./env";
 
 function setupCode(): string {
   const out = execFileSync("uv", ["run", "--project", "../core", "jarvis", "setup-token"], {
@@ -161,18 +161,86 @@ test.describe.serial("Jarvis end to end", () => {
     await expectAccessible(page, "activity");
   });
 
+  test("email: connect Google, see it sorted, reply, undo, then send", async () => {
+    test.setTimeout(180_000);
+    const sentMail = async () =>
+      (await (await page.request.get(`${fakeGoogle}/__test/sent`)).json()) as {
+        count: number;
+        messages: { threadId: string; to: string }[];
+      };
+
+    // Connect: Google's consent screen opens in a new tab and sends you back to Jarvis.
+    await page.goto("/sources");
+    const consent = context.waitForEvent("page");
+    await page.getByRole("button", { name: "Connect Google" }).click();
+    const googleTab = await consent;
+    await expect(googleTab.getByRole("heading", { name: "Google connected" })).toBeVisible();
+    await googleTab.close();
+
+    // Jarvis reads and sorts the inbox within seconds.
+    await page.goto("/inbox");
+    const client = page.getByRole("link", { name: /Achieng Otieno/ });
+    await expect(async () => {
+      await page.reload();
+      await expect(client).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 45_000 });
+    await expectAccessible(page, "inbox");
+
+    // The invoice hiding instructions for an AI is flagged, not obeyed.
+    await page.getByRole("tab", { name: /Suspicious/ }).click();
+    await page.getByRole("link", { name: /Invoice 4471 overdue/ }).click();
+    await expect(page.getByText("Be careful with this one")).toBeVisible();
+
+    // Reply to the client: write it, save it, look at the approval, send, undo.
+    await page.goto("/inbox");
+    await client.click();
+    await expect(page.getByRole("heading", { name: "Kickoff next week" })).toBeVisible();
+    const threadId = page.url().split("/inbox/")[1] ?? "";
+    await expectAccessible(page, "conversation");
+    await page.getByRole("button", { name: "Write it myself" }).click();
+    await page
+      .getByLabel("Message", { exact: true })
+      .fill("Tuesday at 10:00 works for me. See you then.");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+
+    await page.goto("/approvals");
+    const preview = page.getByLabel("Email preview");
+    await expect(preview).toContainText("achieng@client.co.ke");
+    await expect(preview).toContainText("Tuesday at 10:00 works for me.");
+    await expect(page.getByText(/In reply to Achieng Otieno/)).toBeVisible();
+    await expectAccessible(page, "email approval");
+
+    await page.goto(`/inbox/${threadId}`);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByText(/Sending in \d+s/)).toBeVisible();
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect(page.getByText("Undone: nothing was sent.")).toBeVisible();
+    expect((await sentMail()).count).toBe(0);
+
+    // Send again: once the real 60-second undo window passes, it goes out, in the thread.
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByText(/Sending in \d+s/)).toBeVisible();
+    await expect
+      .poll(async () => (await sentMail()).count, { timeout: 100_000, intervals: [2_000] })
+      .toBe(1);
+    expect((await sentMail()).messages[0]).toMatchObject({ threadId, to: "achieng@client.co.ke" });
+    await expect(page.getByText(/^Sent\./)).toBeVisible({ timeout: 15_000 });
+  });
+
   test("phone layout works and stays accessible", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     const bottomNav = page.getByRole("navigation", { name: "Main" }).last();
     await expect(bottomNav).toBeVisible();
+    await expect(bottomNav.getByRole("link", { name: /Inbox/ })).toBeVisible();
     await bottomNav.getByRole("link", { name: "Approvals" }).click();
     await expect(page.getByRole("heading", { name: "Approvals" })).toBeVisible();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
     expect(overflow).toBe(false);
-    for (const path of ["/", "/settings", "/sources", "/onboarding"]) {
+    for (const path of ["/", "/inbox", "/settings", "/sources", "/onboarding"]) {
       await page.goto(path);
       await expectAccessible(page, `mobile ${path}`);
     }
