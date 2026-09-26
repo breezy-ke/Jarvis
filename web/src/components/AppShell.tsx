@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   History,
   Home,
+  Inbox,
   MessageSquare,
   Mic,
   Settings,
@@ -17,7 +18,7 @@ import { useEffect } from "react";
 import { Orb } from "@/components/Orb";
 import { KillSwitchBanner } from "@/components/KillSwitch";
 import { UNAUTHORIZED_EVENT } from "@/lib/api";
-import { keys, useSystemStatus } from "@/lib/queries";
+import { keys, useMailStatus, useSystemStatus } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -32,6 +33,7 @@ export function AppShell() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { data: status } = useSystemStatus();
+  const { data: mail } = useMailStatus();
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -44,6 +46,13 @@ export function AppShell() {
 
   const nav: NavItem[] = [
     { to: "/", label: "Home", icon: <Home />, mobile: true },
+    {
+      to: "/inbox",
+      label: "Inbox",
+      icon: <Inbox />,
+      badge: mail?.access === "none" ? undefined : mail?.counts.attention,
+      mobile: true,
+    },
     { to: "/chat", label: "Chat", icon: <MessageSquare />, mobile: true },
     { to: "/talk", label: "Talk", icon: <Mic />, mobile: true },
     {
@@ -58,7 +67,6 @@ export function AppShell() {
       label: "What I know",
       icon: <Brain />,
       badge: status?.memories_to_review,
-      mobile: true,
     },
     { to: "/onboarding", label: "Onboarding", icon: <Sparkles /> },
     { to: "/sources", label: "Sources", icon: <UserRoundSearch /> },

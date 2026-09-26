@@ -20,14 +20,14 @@ import contextlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from jarvis.db.models import ActionProposal, MailDraft, MailMessage, MailThread
+from jarvis.db.models import ActionProposal, MailDraft, MailMessage, MailThread, MailVerdict
 from jarvis.db.session import transaction
 from jarvis.ingestion.google import GoogleAuth
 from jarvis.llm.router import RouterError
@@ -41,11 +41,12 @@ from jarvis.mail.config import EmailConfig
 from jarvis.mail.digest import MailAlerts
 from jarvis.mail.drafting import Composed, ReplyDrafter
 from jarvis.mail.gmail import GmailAuthError, GmailClient, GmailError
-from jarvis.mail.inbox import Inbox
+from jarvis.mail.inbox import Inbox, ThreadItem
 from jarvis.mail.mime import parse_gmail_message, to_raw
+from jarvis.mail.preview import EMAIL_KINDS
 from jarvis.mail.store import MailStore, Stored
 from jarvis.mail.sync import MailAccess, MailSync, SyncReport
-from jarvis.mail.triage import Triage, TriageWorker
+from jarvis.mail.triage import CATEGORIES, Triage, TriageWorker, details
 from jarvis.notify.owner import OwnerNotifier
 from jarvis.policy.engine import PolicyError
 from jarvis.policy.state import get_kill_switch
@@ -56,6 +57,10 @@ from jarvis.services import Services
 log = logging.getLogger("jarvis.mail")
 
 TRIAGE_IDLE_SECONDS = 30.0
+THREAD_MESSAGES = 25  # the most recent messages shown in a conversation
+NOT_STORED = (
+    "(Jarvis no longer keeps this email's text, and Gmail couldn't be reached. Open it in Gmail.)"
+)
 EDITABLE = frozenset({"to", "cc", "bcc", "subject", "body"})
 # A reply whose send request ended like this was definitely not sent: it can go again.
 SENDABLE_AGAIN = (Status.CANCELLED, Status.REJECTED, Status.FAILED)
@@ -75,6 +80,10 @@ class MailError(RuntimeError):
     """Something you asked for can't be done (the message says why)."""
 
 
+class MailNotFound(MailError):
+    pass
+
+
 def body_hash(text: str) -> str:
     lines = [line.rstrip() for line in text.replace("\r\n", "\n").strip().split("\n")]
     return sha256_hex("\n".join(lines))
@@ -85,6 +94,32 @@ class DraftView:
     draft: MailDraft
     fields: dict[str, Any]
     proposal: ActionProposal | None
+    original: dict[str, Any] | None = None  # Jarvis's own first version, when it wrote one
+
+
+@dataclass(frozen=True)
+class MessageView:
+    id: str
+    direction: str
+    sender: str
+    sender_address: str
+    to: list[str]
+    cc: list[str]
+    date: datetime
+    subject: str
+    body: str
+    attachments: list[str]
+
+
+@dataclass(frozen=True)
+class ThreadView:
+    item: ThreadItem
+    tasks: list[str]
+    dates: list[dict[str, Any]]
+    jarvis_category: str | None
+    checked: bool  # you've confirmed or corrected the category
+    messages: list[MessageView]
+    draft: DraftView | None
 
 
 class MailService:
@@ -396,6 +431,7 @@ class MailService:
                 thread_id=thread_id,
                 reply_to_message_id=composed.reply_to_message_id,
                 content_enc=self.store.enc_json(composed.fields()),
+                original_enc=self.store.enc_json(composed.fields()) if composed.body else None,
                 origin=origin,
                 status="pending",
                 created_at=now,
@@ -451,11 +487,16 @@ class MailService:
         async with self._s.session_factory() as session:
             draft = await session.get(MailDraft, draft_id)
             if draft is None:
-                raise MailError("That draft doesn't exist.")
+                raise MailNotFound("That draft doesn't exist.")
             proposal = (
                 await session.get(ActionProposal, draft.proposal_id) if draft.proposal_id else None
             )
-        return DraftView(draft, self.store.dec_json(draft.content_enc, {}), proposal)
+        return DraftView(
+            draft,
+            self.store.dec_json(draft.content_enc, {}),
+            proposal,
+            self.store.dec_json(draft.original_enc, None),
+        )
 
     async def edit_draft(self, draft_id: uuid.UUID, fields: dict[str, Any]) -> DraftView:
         """Your edit replaces the draft (and its proposal) as one new version."""
@@ -652,9 +693,191 @@ class MailService:
 
     # --- For the app ---------------------------------------------------------------------------
 
-    async def thread(self, thread_id: str) -> MailThread:
+    async def thread_view(self, thread_id: str) -> ThreadView:
+        """A conversation as you read it: plain text only, nothing loaded from the web."""
+        store = self.store
         async with self._s.session_factory() as session:
             thread = await session.get(MailThread, thread_id)
-        if thread is None:
-            raise MailError("That conversation isn't in Jarvis.")
-        return thread
+            if thread is None:
+                raise MailNotFound("That conversation isn't in Jarvis.")
+            latest = (
+                await session.get(MailMessage, thread.last_inbound_id)
+                if thread.last_inbound_id
+                else None
+            )
+            rows = list(
+                await session.scalars(
+                    select(MailMessage)
+                    .where(MailMessage.thread_id == thread_id)
+                    .where(MailMessage.deleted.is_(False))
+                    .order_by(MailMessage.internal_date.desc(), MailMessage.id.desc())
+                    .limit(THREAD_MESSAGES)
+                )
+            )
+            draft_id = await session.scalar(
+                select(MailDraft.id)
+                .where(MailDraft.thread_id == thread_id)
+                .where(MailDraft.status == "pending")
+                .order_by(MailDraft.created_at.desc())
+                .limit(1)
+            )
+        await self._refetch_bodies([m for m in rows if m.body_enc is None])
+        async with self._s.session_factory() as session:
+            fresh = {
+                m.id: m
+                for m in await session.scalars(
+                    select(MailMessage).where(MailMessage.id.in_([m.id for m in rows]))
+                )
+            }
+        messages: list[MessageView] = []
+        for row in reversed(rows):
+            message = fresh.get(row.id, row)
+            names = store.dec_json(message.names_enc, {})
+            messages.append(
+                MessageView(
+                    id=message.id,
+                    direction=message.direction,
+                    sender=str(names.get(message.from_address) or message.from_address),
+                    sender_address=message.from_address,
+                    to=list(message.to_addresses),
+                    cc=list(message.cc_addresses),
+                    date=message.internal_date,
+                    subject=store.dec(message.subject_enc),
+                    body=store.dec(message.body_enc) if message.body_enc else NOT_STORED,
+                    attachments=store.dec_json(message.attachments_enc, []),
+                )
+            )
+        info = details(store, thread)
+        return ThreadView(
+            item=self.inbox.item(thread, latest),
+            tasks=list(info.get("tasks", [])),
+            dates=list(info.get("dates", [])),
+            jarvis_category=thread.category,
+            checked=thread.owner_checked_at is not None,
+            messages=messages,
+            draft=await self.draft_view(draft_id) if draft_id else None,
+        )
+
+    async def email_context(self, proposals: list[ActionProposal]) -> dict[uuid.UUID, Any]:
+        """For email approvals: the email being answered, and Jarvis's version if you edited it."""
+        drafts: dict[uuid.UUID, uuid.UUID] = {}
+        for proposal in proposals:
+            raw = (proposal.payload or {}).get("draft_id") if proposal.kind in EMAIL_KINDS else None
+            try:
+                drafts[proposal.id] = uuid.UUID(str(raw))
+            except ValueError:
+                continue
+        if not drafts:
+            return {}
+        store = self.store
+        context: dict[uuid.UUID, Any] = {}
+        async with self._s.session_factory() as session:
+            for proposal_id, draft_id in drafts.items():
+                draft = await session.get(MailDraft, draft_id)
+                if draft is None:
+                    continue
+                message = (
+                    await session.get(MailMessage, draft.reply_to_message_id)
+                    if draft.reply_to_message_id
+                    else None
+                )
+                replying_to = None
+                if message is not None:
+                    names = store.dec_json(message.names_enc, {})
+                    replying_to = {
+                        "sender": str(names.get(message.from_address) or message.from_address),
+                        "sender_address": message.from_address,
+                        "subject": store.dec(message.subject_enc),
+                        "date": message.internal_date.isoformat(),
+                        "text": store.dec(message.body_enc)[:1_500],
+                    }
+                original = store.dec_json(draft.original_enc, None)
+                context[proposal_id] = {
+                    "thread_id": draft.thread_id,
+                    "draft_id": str(draft.id),
+                    "replying_to": replying_to,
+                    "original_body": original.get("body") if original else None,
+                }
+        return context
+
+    async def _refetch_bodies(self, missing: list[MailMessage]) -> None:
+        """Text Jarvis forgot (past the retention window) comes back from Gmail on demand."""
+        if not missing or (await self.access()).level == "none":
+            return
+        try:
+            client = self.client()
+            parsed = [
+                parse_gmail_message(resource)
+                for resource in [await client.get_message(m.id) for m in missing]
+                if resource is not None
+            ]
+        except (GmailError, httpx.HTTPError):
+            log.warning("mail: couldn't fetch older email text from Gmail", exc_info=True)
+            return
+        owner = (await self.access()).account or ""
+        async with transaction(self._s.session_factory) as session:
+            for message in parsed:
+                await self.store.upsert(session, message, owner=owner)
+
+    async def record_verdict(self, thread_id: str, category: str) -> None:
+        """ "Is this right?": your category for the email Jarvis sorted, kept for `make eval`."""
+        if category not in CATEGORIES:
+            raise MailError(f"'{category}' isn't a category.")
+        now = self._s.clock.now()
+        async with transaction(self._s.session_factory) as session:
+            thread = await session.get(MailThread, thread_id, with_for_update=True)
+            if thread is None or thread.triaged_message_id is None:
+                raise MailError("Jarvis hasn't sorted this conversation yet.")
+            verdict = await session.get(MailVerdict, thread.triaged_message_id)
+            if verdict is None:
+                session.add(
+                    MailVerdict(
+                        message_id=thread.triaged_message_id,
+                        thread_id=thread_id,
+                        category=category,
+                        jarvis_category=thread.category,
+                        decided_at=now,
+                    )
+                )
+            else:
+                verdict.category, verdict.decided_at = category, now
+            thread.owner_category = category
+            thread.owner_checked_at = now
+
+    async def propose_hold(
+        self,
+        *,
+        title: str,
+        start: str,
+        end: str | None = None,
+        all_day: bool = False,
+        thread_id: str | None = None,
+    ) -> ActionProposal:
+        """You tapped "Add to calendar": your tap is the approval (holds are low risk)."""
+        if not (await self.access()).can_add_holds:
+            raise MailError(
+                "Jarvis can't add calendar holds yet: reconnect Google in Sources and allow "
+                "calendar events."
+            )
+        payload = {"title": title, "start": start, "end": end, "all_day": all_day}
+        if thread_id:
+            payload["thread_id"] = thread_id
+        async with transaction(self._s.session_factory) as session:
+            try:
+                proposal = await self._s.policy.propose(
+                    session,
+                    kind="calendar.hold",
+                    payload=payload,
+                    rationale="You asked for this hold, from a date in an email.",
+                    created_by="owner",
+                )
+                if proposal.status == Status.PENDING:  # autonomy is paused: approve your tap
+                    proposal = await self._s.policy.approve(
+                        session,
+                        proposal.id,
+                        approved_hash=proposal.payload_hash,
+                        channel=Channel.PWA,
+                    )
+            except PolicyError as exc:
+                raise MailError(str(exc)) from exc
+        return proposal

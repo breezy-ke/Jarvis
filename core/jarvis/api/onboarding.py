@@ -119,6 +119,8 @@ async def google_status(owner: Owner, state: State) -> dict[str, Any]:
         "connected": connection.connected,
         "account_email": connection.account_email,
         "scopes": connection.scopes,
+        "mail_access": connection.mail_access,
+        "can_add_holds": connection.can_add_holds,
         "redirect_uri": state.google.redirect_uri,
     }
 
@@ -175,13 +177,24 @@ async def handle_google_callback(state_obj: AppState, query: dict[str, str]) -> 
                 session,
                 actor="owner",
                 event_type="integration.google",
-                summary="Connected Google (read-only)",
+                summary=f"Connected Google (mail access: {connection.mail_access})",
+                data={"scopes": (connection.scopes or "").split()},
             )
     except GoogleError as exc:
         return _page("Couldn't connect Google", str(exc), ok=False)
+    if state_obj.mail is not None:
+        state_obj.mail.check_now()
     who = connection.account_email or "your Google account"
-    return _page(
-        "Google connected",
-        f"Jarvis can now read {who} (read-only). You can close this tab.",
-        ok=True,
-    )
+    if connection.mail_access == "full":
+        what = (
+            f"Jarvis can now read and sort {who}'s mail, and draft replies. Nothing is sent "
+            "without your approval."
+        )
+    elif connection.mail_access == "read":
+        what = (
+            f"Jarvis can read and sort {who}'s mail, but not label, draft or send: allow "
+            '"Read, compose and send" next time to let it.'
+        )
+    else:
+        what = f"Connected {who}, but without Gmail access."
+    return _page("Google connected", f"{what} You can close this tab.", ok=True)

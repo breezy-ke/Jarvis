@@ -13,6 +13,7 @@ from jarvis.chat.service import ChatService
 from jarvis.db.models import AuthSession
 from jarvis.ingestion.google import GoogleAuth
 from jarvis.ingestion.service import IngestionService
+from jarvis.mail.service import MailService
 from jarvis.onboarding.service import OnboardingService
 from jarvis.services import Services
 from jarvis.telegram.bot import TelegramBot
@@ -30,6 +31,7 @@ class AppState:
     http: httpx.AsyncClient
     voice: VoiceRuntime
     telegram: TelegramBot | None = None
+    mail: MailService | None = None
 
 
 def get_state(request: Request) -> AppState:

@@ -58,6 +58,10 @@ def _minimal(schema: dict[str, Any], defs: dict[str, Any]) -> Any:
         return _minimal(options[0], defs) if options else None
     if "default" in schema:
         return schema["default"]
+    if "const" in schema:
+        return schema["const"]
+    if schema.get("enum"):  # a choice: the first allowed value
+        return schema["enum"][0]
     kind = schema.get("type")
     if kind == "object":
         props = schema.get("properties", {})

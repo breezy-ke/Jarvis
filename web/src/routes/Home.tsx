@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Brain,
   CheckCircle2,
+  Inbox,
   Lock,
   MessageSquare,
   ShieldCheck,
@@ -16,16 +17,56 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress, Skeleton } from "@/components/ui/misc";
-import { useSystemStatus } from "@/lib/queries";
-import { greeting, percent } from "@/lib/utils";
+import { useMailStatus, useSystemStatus } from "@/lib/queries";
+import { greeting, percent, timeAgo } from "@/lib/utils";
 
 const ROADMAP = [
-  { phase: "Phase 2", title: "Voice: “Hey Jarvis”, and Jarvis talks back" },
-  { phase: "Phase 3", title: "Email: triage, drafts in your style, send with approval" },
   { phase: "Phase 4", title: "Daily tech brief and web research" },
   { phase: "Phase 5", title: "Lead engine: find and win clients" },
   { phase: "Phase 6", title: "UI Studio: build websites and apps" },
+  { phase: "Phase 7", title: "Calendar, reminders, proposals and invoices" },
 ];
+
+function InboxCard() {
+  const { data } = useMailStatus();
+  if (!data || data.access === "none") return null;
+  const { counts } = data;
+  return (
+    <Card>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Inbox className="size-4" /> Inbox
+          </CardTitle>
+          <CardDescription>
+            {counts.attention
+              ? `${counts.attention} need${counts.attention === 1 ? "s" : ""} you`
+              : "Nothing needs you right now"}
+            {counts.suspicious ? ` · ${counts.suspicious} suspicious` : ""}
+            {` · checked ${timeAgo(data.sync.last_sync_at)}`}
+          </CardDescription>
+        </div>
+        <Button asChild variant="outline">
+          <Link to="/inbox">
+            Open inbox <ArrowRight />
+          </Link>
+        </Button>
+      </CardHeader>
+      {data.digest ? (
+        <CardContent>
+          <details>
+            <summary className="cursor-pointer text-sm font-medium">
+              {data.digest.title} · {timeAgo(data.digest.created_at)}
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+              {data.digest.text}
+            </p>
+          </details>
+        </CardContent>
+      ) : null}
+    </Card>
+  );
+}
 
 export function HomePage() {
   const { data, isLoading } = useSystemStatus();
@@ -126,6 +167,8 @@ export function HomePage() {
           </CardContent>
         </Card>
       </div>
+
+      <InboxCard />
 
       <Card>
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">

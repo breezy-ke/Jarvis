@@ -352,7 +352,8 @@ async def test_kill_switch_models_policies_audit(harness: Harness) -> None:
     assert models["tasks"]["chat"]["candidates"][0]["available"] is True
     policies = (await harness.client.get("/api/system/policies")).json()
     assert policies["action_kinds"]["notify.owner"]["available"] is True
-    assert policies["action_kinds"]["email.send"]["available"] is False
+    assert policies["action_kinds"]["email.send"]["available"] is True  # Phase 3
+    assert policies["action_kinds"]["outreach.send"]["available"] is False  # Phase 5
     audit = (await harness.client.get("/api/audit")).json()
     assert audit[0]["event_type"] == "system.kill_switch"
     assert (await harness.client.get("/api/audit/verify")).json()["ok"] is True

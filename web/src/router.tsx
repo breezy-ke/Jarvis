@@ -9,12 +9,14 @@ import {
 
 import { AppShell } from "./components/AppShell";
 import { api } from "./lib/api";
+import { isTab } from "./lib/mail";
 import { keys } from "./lib/queries";
-import type { AuthStatus } from "./lib/types";
+import type { AuthStatus, InboxTab } from "./lib/types";
 import { ActivityPage } from "./routes/Activity";
 import { ApprovalsPage } from "./routes/Approvals";
 import { ChatPage } from "./routes/Chat";
 import { HomePage } from "./routes/Home";
+import { InboxPage, ThreadPage } from "./routes/Inbox";
 import { LoginPage } from "./routes/Login";
 import { MemoryPage } from "./routes/Memory";
 import { OnboardingModulePage, OnboardingPage } from "./routes/Onboarding";
@@ -88,6 +90,20 @@ const talkRoute = createRoute({
     typeof search.c === "string" ? { c: search.c } : {},
 });
 
+const inboxRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/inbox",
+  component: InboxPage,
+  validateSearch: (search: Record<string, unknown>): { tab?: InboxTab } =>
+    isTab(search.tab) ? { tab: search.tab } : {},
+});
+
+const threadRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/inbox/$threadId",
+  component: ThreadPage,
+});
+
 const approvalsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/approvals",
@@ -137,6 +153,8 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     chatRoute,
     talkRoute,
+    inboxRoute,
+    threadRoute,
     approvalsRoute,
     activityRoute,
     onboardingRoute,

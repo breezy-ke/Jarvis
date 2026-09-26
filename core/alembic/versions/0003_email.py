@@ -1,4 +1,4 @@
-"""Email (Phase 3): Gmail threads and messages, contacts, and Jarvis's reply drafts.
+"""Email (Phase 3): Gmail threads and messages, contacts, Jarvis's reply drafts, and your verdicts.
 
 Revision ID: 0003
 Revises: 0002
@@ -66,6 +66,7 @@ def upgrade() -> None:
         sa.Column("reply_to_message_id", sa.String(length=64), nullable=True),
         sa.Column("proposal_id", sa.UUID(), nullable=True),
         sa.Column("content_enc", sa.LargeBinary(), nullable=True),
+        sa.Column("original_enc", sa.LargeBinary(), nullable=True),
         sa.Column("original_hash", sa.String(length=64), nullable=True),
         sa.Column("gmail_draft_id", sa.String(length=64), nullable=True),
         sa.Column("gmail_body_hash", sa.String(length=64), nullable=True),
@@ -132,9 +133,29 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_mail_messages_thread_id"), "mail_messages", ["thread_id"], unique=False
     )
+    op.create_table(
+        "mail_verdicts",
+        sa.Column("message_id", sa.String(length=64), nullable=False),
+        sa.Column("thread_id", sa.String(length=64), nullable=False),
+        sa.Column("category", sa.String(length=16), nullable=False),
+        sa.Column("jarvis_category", sa.String(length=16), nullable=True),
+        sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["message_id"],
+            ["mail_messages.id"],
+            name=op.f("fk_mail_verdicts_message_id_mail_messages"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("message_id", name=op.f("pk_mail_verdicts")),
+    )
+    op.create_index(
+        op.f("ix_mail_verdicts_thread_id"), "mail_verdicts", ["thread_id"], unique=False
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(op.f("ix_mail_verdicts_thread_id"), table_name="mail_verdicts")
+    op.drop_table("mail_verdicts")
     op.drop_index(op.f("ix_mail_messages_thread_id"), table_name="mail_messages")
     op.drop_index(op.f("ix_mail_messages_internal_date"), table_name="mail_messages")
     op.drop_index(op.f("ix_mail_messages_from_address"), table_name="mail_messages")
