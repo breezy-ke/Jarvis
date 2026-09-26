@@ -52,6 +52,42 @@ async def thread_of(mail: MailRig, message: str) -> MailThread:
     return row
 
 
+# --- Google access ----------------------------------------------------------------------------
+
+
+async def test_losing_google_access_is_said_once(
+    mail: MailRig, mailer: MailService, notes: Notes
+) -> None:
+    await mailer.sync_round()
+    mail.fake.faults.add("revoked")  # you changed your Google password
+    for _ in range(3):
+        await mailer.sync_round()
+    said = [text for text, _ in notes.said if text.startswith("Reconnect Google")]
+    assert len(said) == 1
+    assert "Connect Google again in Sources" in said[0]
+
+    mail.fake.faults.discard("revoked")  # you reconnected
+    await mailer.sync_round()
+    mail.fake.faults.add("revoked")  # and it happened again
+    await mailer.sync_round()
+    assert len([t for t, _ in notes.said if t.startswith("Reconnect Google")]) == 2
+
+
+async def test_losing_google_access_is_said_until_it_reaches_you(
+    mail: MailRig, mailer: MailService, notes: Notes
+) -> None:
+    await mailer.sync_round()
+    mail.fake.faults.add("revoked")
+    mailer.notifier.telegram = None  # no Telegram, and no phone signed up for alerts
+    await mailer.sync_round()
+    await mailer.sync_round()
+    assert notes.said == []
+    mailer.notifier.telegram = notes  # now there's somewhere to say it
+    await mailer.sync_round()
+    await mailer.sync_round()
+    assert len([t for t, _ in notes.said if t.startswith("Reconnect Google")]) == 1
+
+
 # --- Urgent alerts ----------------------------------------------------------------------------
 
 

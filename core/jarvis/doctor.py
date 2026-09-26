@@ -9,14 +9,20 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import text
 
+from jarvis.clock import Clock, SystemClock
 from jarvis.config import Settings, get_settings
+from jarvis.ingestion.google import GoogleConnection
 from jarvis.llm.config import ModelsConfig, PrivacyClass, load_models_config
 from jarvis.llm.privacy import allowed
+from jarvis.mail.actions import JARVIS_LABELS
+from jarvis.mail.config import EmailConfigError, load_email_config
+from jarvis.mail.sync import SyncState
 from jarvis.policy.config import load_policies
 from jarvis.voice.config import VoiceConfigError, load_voice_config
 from jarvis.voice.speech import SpeechClient
@@ -437,6 +443,193 @@ async def check_online(
     return checks
 
 
+# --- Email -------------------------------------------------------------------------------------
+
+STALE_SYNC = timedelta(minutes=15)
+SYNC_POINT_LIFE = timedelta(days=7)  # about how long Gmail keeps a place to sync from
+_WHO = {"known": "people you know", "all": "everyone", "off": "nobody"}
+
+
+def check_email_config(settings: Settings) -> Check:
+    try:
+        config = load_email_config(settings.email_config_path)
+    except EmailConfigError as exc:
+        return Check(FAIL, "email.yaml", str(exc), "Fix the file; Jarvis refuses to start with it.")
+    return Check(
+        OK,
+        "email.yaml",
+        f"auto-drafts for {_WHO[config.drafting.auto_draft]}, urgent alerts from "
+        f"{_WHO[config.alerts.urgent]}, digests " + (" and ".join(config.digests.times) or "off"),
+    )
+
+
+def _ago(delta: timedelta) -> str:
+    minutes = max(0, int(delta.total_seconds() // 60))
+    if minutes < 120:
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    if minutes < 48 * 60:
+        return f"{minutes // 60} hours"
+    return f"{minutes // (24 * 60)} days"
+
+
+def email_checks(connection: GoogleConnection, state: SyncState, now: datetime) -> list[Check]:
+    """What Jarvis may do with your Gmail, and whether it's keeping up."""
+    if not connection.connected:
+        return [
+            Check(
+                WARN,
+                "Gmail",
+                "not connected",
+                "In the app, open Sources and choose Connect Google (docs/setup.md, step 3).",
+            )
+        ]
+    account = connection.account_email or "your account"
+    checks: list[Check] = []
+    if connection.mail_access == "full":
+        access = f"{account}: read, label, draft and send (sending waits for you)"
+        checks.append(Check(OK, "Gmail access", access))
+    elif connection.mail_access == "read":
+        checks.append(
+            Check(
+                WARN,
+                "Gmail access",
+                f"{account}: read only, so Jarvis sorts and summarises but can't label, "
+                "draft or send",
+                "In Sources, choose Give Jarvis your inbox and tick every box Google shows.",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                FAIL,
+                "Gmail access",
+                f"{account}: Google is connected, but Gmail wasn't allowed",
+                "In Sources, connect Google again and tick the Gmail boxes.",
+            )
+        )
+        return checks
+    if connection.can_add_holds:
+        checks.append(Check(OK, "Calendar holds", "allowed (private events, no invitees)"))
+    else:
+        checks.append(
+            Check(
+                WARN,
+                "Calendar holds",
+                "not allowed, so Add to calendar won't work",
+                "In Sources, connect Google again and allow calendar events.",
+            )
+        )
+    checks.append(_sync_check(state, now))
+    return checks
+
+
+def _sync_check(state: SyncState, now: datetime) -> Check:
+    if state.status == "reconnect":
+        return Check(
+            FAIL,
+            "Email sync",
+            "Google stopped accepting Jarvis's access (changing your password does this)",
+            "In Sources, connect Google again. Jarvis carries on from where it stopped.",
+        )
+    if state.last_sync_at is None:
+        return Check(
+            WARN,
+            "Email sync",
+            "Jarvis hasn't read your inbox yet",
+            "Start Jarvis with `make up`; the first read takes a few minutes.",
+        )
+    ago = now - datetime.fromisoformat(state.last_sync_at)
+    if state.status == "error":
+        return Check(
+            WARN,
+            "Email sync",
+            f"the last check failed ({state.error or 'no details'}); "
+            f"the last good one was {_ago(ago)} ago",
+            "Jarvis tries again every minute. If it keeps failing, see docs/runbook.md (Email).",
+        )
+    if ago > STALE_SYNC:
+        later = (
+            ". Gmail keeps Jarvis's place for about a week, so Jarvis will read your recent "
+            "email again when it's back (automatically)"
+            if ago > SYNC_POINT_LIFE
+            else ""
+        )
+        return Check(
+            WARN,
+            "Email sync",
+            f"last check {_ago(ago)} ago{later}",
+            "Is Jarvis running? Start it with `make up`; `make logs` shows any email errors.",
+        )
+    return Check(OK, "Email sync", f"last check {_ago(ago)} ago")
+
+
+async def check_email(
+    settings: Settings, client: httpx.AsyncClient, *, online: bool, clock: Clock | None = None
+) -> list[Check]:
+    from jarvis.db.models import SystemState
+    from jarvis.db.session import create_engine, create_session_factory, transaction
+    from jarvis.ingestion.google import GoogleAuth, GoogleError
+    from jarvis.mail.gmail import GmailAuthError, GmailClient, GmailError
+    from jarvis.mail.sync import STATE_KEY
+    from jarvis.security.crypto import Vault, VaultError
+
+    checks = [check_email_config(settings)]
+    if settings.secret_key is None:
+        return checks  # the encryption key check says what to do
+    try:
+        vault = Vault(settings.secret_key.get_secret_value())
+    except VaultError:
+        return checks
+    engine = create_engine(settings.database_url)
+    try:
+        factory = create_session_factory(engine)
+        clock = clock or SystemClock()
+        google = GoogleAuth.from_settings(settings, vault=vault, clock=clock, http=client)
+        try:
+            async with factory() as session:
+                connection = await google.connection(session)
+                row = await session.get(SystemState, STATE_KEY)
+        except Exception as exc:  # the database check explains what's wrong
+            reason = f"couldn't read Jarvis's email state ({type(exc).__name__})"
+            return [*checks, Check(WARN, "Gmail", reason, "Fix the Database check first.")]
+        state = SyncState.load(row.value if row is not None else None)
+        checks += email_checks(connection, state, clock.now())
+        if not online or connection.mail_access == "none":
+            return checks
+
+        async def token() -> str:
+            async with transaction(factory) as session:
+                return await google.access_token(session)
+
+        gmail = GmailClient(client, token, endpoints=google.endpoints, backoff=0.0)
+        try:
+            profile = await gmail.profile()
+            labels = {str(label.get("name")) for label in await gmail.labels()}
+        except (GoogleError, GmailAuthError):
+            fix = "In Sources, connect Google again."
+            return [*checks, Check(FAIL, "Gmail (online)", "Google refused Jarvis's access", fix)]
+        except (GmailError, httpx.HTTPError) as exc:
+            reason = f"couldn't reach Gmail ({type(exc).__name__})"
+            fix = "Check the PC's internet connection, then run `make doctor ONLINE=1` again."
+            return [*checks, Check(WARN, "Gmail (online)", reason, fix)]
+        address = profile.get("emailAddress") or connection.account_email
+        checks.append(Check(OK, "Gmail (online)", f"reachable as {address}"))
+        made = [name for name in JARVIS_LABELS.values() if name in labels]
+        checks.append(
+            Check(
+                OK,
+                "Jarvis labels",
+                f"all {len(made)} in Gmail"
+                if len(made) == len(JARVIS_LABELS)
+                else f"{len(made)} of {len(JARVIS_LABELS)} in Gmail; Jarvis adds the rest "
+                "the first time it uses them (once autonomy is on)",
+            )
+        )
+        return checks
+    finally:
+        await engine.dispose()
+
+
 def render(checks: list[Check]) -> str:
     lines = []
     for c in checks:
@@ -454,6 +647,7 @@ async def run_doctor(*, online: bool = False) -> int:
     checks.append(await check_database(settings))
     checks += await check_voice(settings)
     async with httpx.AsyncClient() as client:
+        checks += await check_email(settings, client, online=online)
         checks.append(await check_telegram(settings, client, online=online))
         checks += await check_ollama(settings, models, client)
         if models is not None:
