@@ -30,6 +30,7 @@ Everything stateful lives in one Postgres database.
                                                       │ └───────────┘ └──────────┘ └──────────┘ └──────────┘    │
                                                       └─────────────────────────────────────────────────────────┘
    Cloud AI (only the data each is allowed): Groq · Gemini · OpenRouter · (paid, off by default)
+   Google (once you connect it): the core checks Gmail every minute and calls Calendar
    Telegram (if you set it up): the core fetches your messages; nothing listens publicly
 ```
 
@@ -57,7 +58,13 @@ Everything stateful lives in one Postgres database.
    - `forget`
    - `get_status`
    - `list_capabilities`
+   - `inbox_overview` and `draft_email_reply` (email; a draft always waits
+     for approval)
    - `propose_action`, the only way to affect anything outside Jarvis
+
+   Once someone else's words (an email, a forwarded message) are in what the
+   agent sees, from a tool or from the recent conversation, `remember` and
+   `forget` refuse, and every proposal waits for you.
 4. Afterwards, a background job extracts new facts from the conversation. They
    are stored as `inferred`, so they wait for your review.
 
@@ -70,6 +77,41 @@ agent ─► propose_action ─► validators ─► policy decision ─┬─�
                                                                                                     ▼
                                executor loop (every 2 s, skips everything while the kill switch is on)
                                      ─► executing (committed) ─► executed | failed | unknown_outcome
+```
+
+**Email** (`core/jarvis/mail/`; [ADR 0009](adr/0009-gmail-by-rest-polling-and-recipients-by-code.md)):
+
+1. **Sync:** the first time, Jarvis reads the last 14 days of your inbox and
+   sent mail. Then every minute it asks Gmail what changed since last time
+   (`history.list`). If Gmail has forgotten that point (after about a week
+   offline), it reads the recent mail again. Everything that carries content
+   is encrypted before it's stored.
+2. **Sort:** code checks each new email first: authentication results,
+   look-alike senders, a Reply-To elsewhere, risky links, hidden text and
+   AI-directed phrasing. Then a model with no tools (the `triage` task) sorts
+   it and writes a summary, tasks and dates. Rules the model can't override
+   come last: hard warning signs make it suspicious, VIPs are important, and
+   newsletters from strangers skip the model altogether.
+3. **After sorting:**
+   - a `Jarvis/…` label (`email.label`, L3, once autonomy is on)
+   - an instant alert for urgent email from someone you know
+   - an automatic draft when it needs a reply from someone you know
+4. **Draft:** a model with no tools (the `drafting` task) writes only the
+   body. Code works out the recipients, the subject and the threading headers
+   from the conversation, then proposes `email.send` (always L2) and a Gmail
+   copy (`email.draft`, L3).
+5. **Send:** after your approval and the 60-second undo, the exact approved
+   email goes out, marked with an `X-Jarvis-Action` header. If Gmail's answer
+   is lost, the send is "unknown outcome" until that marker turns up in your
+   Sent mail. It's never sent twice.
+6. **Digests** at 07:15 and 17:30 are built by code, not a model.
+
+```
+Gmail ─► sync (every minute) ─► encrypted store ─► signals (code) ─► triage model (no tools) ─► rules
+                                                                                                  │
+    Inbox · Jarvis/… labels · alerts (people you know) · digests ◄────────────────────────────────┤
+                                                                                                  ▼
+            you approve ─► 60 s undo ─► Gmail send ◄─ email.send (L2) ◄─ recipients by code ◄─ drafting model (body only)
 ```
 
 **Voice** (`/api/voice/ws`, a WebSocket; `core/jarvis/voice/protocol.py`
@@ -141,11 +183,12 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
 | `onboarding/` | The 12 interview modules and their agent |
 | `ingestion/` | The consented sources, Google OAuth (PKCE, loopback redirect), style statistics |
 | `security/` | Encryption (Fernet), canonical hashing, secret scanners, untrusted-content handling, one-time pairing codes |
-| `notify/` | Web Push (VAPID) |
+| `mail/` | Gmail sync and client, the encrypted mail store, MIME parsing and building, warning signs, triage, drafting, the email actions, who you know, the Inbox, alerts and digests, the triage eval |
+| `notify/` | Web Push (VAPID), and telling you directly (push and Telegram) |
 | `workflows/` | The executor loop and the scheduled jobs (DBOS) |
 | `voice/` | The voice pipeline (Pipecat), the voice brain, voice confirmations, the speech server client, paired devices, the latency benchmark |
 | `telegram/` | The Telegram bot: the Bot API client, owner linking, message formatting, approval buttons |
-| `doctor.py`, `cli.py` | `jarvis doctor`, `secrets`, `setup-token`, `migrate`, `serve`, `local-models`, `fetch-text-data`, `pull-speech-models`, `bench-voice` |
+| `doctor.py`, `cli.py` | `jarvis doctor`, `secrets`, `setup-token`, `migrate`, `serve`, `local-models`, `fetch-text-data`, `pull-speech-models`, `bench-voice`, `eval triage` |
 
 **Background work:**
 
@@ -155,7 +198,10 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
   - housekeeping, hourly: expires stale proposals and removes old
     sessions/challenges
   - nightly maintenance at 03:00, which catches up if the PC was off: purges
-    facts you asked to forget, after 7 days
+    facts you asked to forget, after 7 days, and email text older than 90 days
+  - the inbox digests at 07:15 and 17:30 (`config/email.yaml`)
+- The email loops, once Google is connected: sync every minute, and sorting
+  as mail arrives.
 - The Telegram bot's long-poll loop, when a bot token is set.
 - At startup, voice checks for its sentence data and downloads it once if
   it's missing.
@@ -175,7 +221,11 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
 | `push_subscriptions` | Notification endpoints |
 | `voice_devices` | Paired satellites: name, token hash, last seen, removed |
 | `telegram_notices` | The Telegram messages about approvals, so they stay in step with decisions |
-| `system_state` | The kill switch, the setup code hash, pairing codes, the Telegram link, and similar |
+| `mail_messages`, `mail_threads` | Your email and how Jarvis sorted it (content encrypted; addresses, dates and labels readable) |
+| `mail_contacts` | Who you've written to and heard from, for "people you know" |
+| `mail_drafts` | Jarvis's reply drafts, their send proposals and their Gmail copies |
+| `mail_verdicts` | Your "Is this right?" answers, for `make eval` |
+| `system_state` | The kill switch, the setup code hash, pairing codes, the Telegram link, the email sync position, the latest digest, and similar |
 
 DBOS keeps its workflow state in its own `dbos` schema in the same database.
 
@@ -186,9 +236,11 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
   offline app shell; the service worker never caches API calls.
 - **Pages:**
   - Home
+  - Inbox (sorted email, conversations, the reply editor)
   - Chat
   - Talk (voice)
-  - Approvals
+  - Approvals (emails shown as they'll be sent, with your changes to
+    Jarvis's draft)
   - What I know (memory and profile)
   - Onboarding
   - Sources
@@ -206,16 +258,18 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
 | `config/models.yaml` | Providers and their privacy flags, models, free-tier limits, which models each task may use, the paid budget |
 | `config/policies.yaml` | Autonomy level, risk, validators, undo window and caps for each kind of action; quiet hours |
 | `config/voice.yaml` | The speech models and Jarvis's voice, filler timing, and the exact phrases that confirm or cancel an action |
+| `config/email.yaml` | How often and how far back to read Gmail, how long to keep email text, automatic drafts, alerts, digest times |
 | `config/persona.md` | Jarvis's personality and manners |
 
 ## Testing
 
 | Layer | What runs |
 |---|---|
-| Core unit and integration | pytest against real Postgres + pgvector, never SQLite: policy engine, router, auth (with a software WebAuthn authenticator), memory, onboarding, ingestion, API. Voice runs over a real socket, with recorded speech going through the real turn detection and a fake speech server. Telegram runs against a fake Bot API |
+| Core unit and integration | pytest against real Postgres + pgvector, never SQLite: policy engine, router, auth (with a software WebAuthn authenticator), memory, onboarding, ingestion, API. Voice runs over a real socket, with recorded speech going through the real turn detection and a fake speech server. Telegram runs against a fake Bot API. Email runs against a fake Gmail with faults (expired sync points, rate limits, revoked access, lost answers after a send) |
+| Email injection suite | 61 attack emails through the whole email pipeline and the chat agent, with the normal fake model and an obedient one; 100% must pass (security.md, "Email") |
 | Property-based | Hypothesis drives random event sequences through the policy engine (see security.md) |
 | Web unit | Vitest + Testing Library |
-| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, talking to Jarvis (through Chromium's fake microphone), audit integrity, the phone layout and sign-in again, with axe accessibility scans |
+| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, talking to Jarvis (through Chromium's fake microphone), connecting Gmail and replying with undo (against the fake Gmail), audit integrity, the phone layout and sign-in again, with axe accessibility scans |
 | Satellite | pytest on Linux and Windows: the conversation loop against a fake Jarvis that speaks the real protocol (wake word, barge-in, mute, follow-ups, pairing). On Windows also the real wake-word model, the installer's helpers, and the false-wake benchmark on a synthetic room |
 | Deployment | CI builds the Docker image, runs `make secrets`, starts the stack and smoke-tests it (health, the PWA, 401 on protected APIs, setup code, doctor, backup) |
 | Scripts | shellcheck + shfmt for the WSL scripts; PSScriptAnalyzer (Windows PowerShell 5.1 compatibility) and helper tests on a Windows runner for `setup.ps1` and `install-satellite.ps1` |
