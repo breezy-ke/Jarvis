@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
-import type { AuthStatus, SystemStatus } from "./types";
+import type { AuthStatus, MailStatus, SystemStatus } from "./types";
 
 export const keys = {
   auth: ["auth"] as const,
@@ -22,10 +22,22 @@ export const keys = {
   push: ["push"] as const,
   voice: ["voice"] as const,
   telegram: ["telegram"] as const,
+  mail: ["mail"] as const,
+  mailStatus: ["mail", "status"] as const,
+  threads: (tab: string) => ["mail", "threads", tab] as const,
+  thread: (id: string) => ["mail", "thread", id] as const,
 };
 
 export function useAuthStatus() {
   return useQuery({ queryKey: keys.auth, queryFn: () => api.get<AuthStatus>("/api/auth/status") });
+}
+
+export function useMailStatus() {
+  return useQuery({
+    queryKey: keys.mailStatus,
+    queryFn: () => api.get<MailStatus>("/api/mail/status"),
+    refetchInterval: 30_000,
+  });
 }
 
 export function useSystemStatus() {

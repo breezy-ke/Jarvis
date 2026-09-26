@@ -44,6 +44,21 @@ export interface Action {
   result: Record<string, unknown> | null;
   error: string | null;
   needs_passkey: boolean;
+  email?: ActionEmail;
+}
+
+/** For an email approval: the email it answers, and Jarvis's own version if you edited it. */
+export interface ActionEmail {
+  thread_id: string;
+  draft_id: string;
+  replying_to: {
+    sender: string;
+    sender_address: string;
+    subject: string;
+    date: string;
+    text: string;
+  } | null;
+  original_body: string | null;
 }
 
 export interface Conversation {
@@ -156,7 +171,104 @@ export interface GoogleStatus {
   connected: boolean;
   account_email: string | null;
   scopes: string | null;
+  mail_access: MailAccess;
+  can_add_holds: boolean;
   redirect_uri: string;
+}
+
+// --- Email -------------------------------------------------------------------------------
+
+export type MailAccess = "full" | "read" | "none";
+
+export type MailCategory =
+  "urgent" | "needs_reply" | "fyi" | "newsletter" | "lead" | "invoice" | "suspicious";
+
+export type InboxTab =
+  "attention" | "leads" | "invoices" | "fyi" | "newsletters" | "suspicious" | "all";
+
+export interface MailSignal {
+  id: string;
+  label: string;
+  hard: boolean;
+}
+
+export interface ThreadItem {
+  id: string;
+  subject: string;
+  sender: string;
+  sender_address: string;
+  category: MailCategory | null;
+  priority: number | null;
+  needs_reply: boolean;
+  unread: boolean;
+  in_inbox: boolean;
+  summary: string;
+  signals: MailSignal[];
+  last_message_at: string;
+}
+
+export interface MailMessageView {
+  id: string;
+  direction: "in" | "out";
+  sender: string;
+  sender_address: string;
+  to: string[];
+  cc: string[];
+  date: string;
+  subject: string;
+  body: string;
+  attachments: string[];
+}
+
+export interface MailDate {
+  what: string;
+  start: string;
+  end: string | null;
+  all_day: boolean;
+}
+
+export interface DraftFields {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+}
+
+export interface MailDraft {
+  id: string;
+  thread_id: string;
+  status: string;
+  status_reason: string | null;
+  origin: string;
+  fields: DraftFields;
+  original_body: string | null;
+  in_gmail: boolean;
+  proposal: Action | null;
+}
+
+export interface ThreadView extends ThreadItem {
+  jarvis_category: MailCategory | null;
+  checked: boolean;
+  tasks: string[];
+  dates: MailDate[];
+  messages: MailMessageView[];
+  draft: MailDraft | null;
+}
+
+export interface MailStatus {
+  access: MailAccess;
+  account: string | null;
+  can_add_holds: boolean;
+  sync: {
+    status: string;
+    error: string | null;
+    last_sync_at: string | null;
+    last_full_sync_at: string | null;
+  };
+  counts: Record<InboxTab, number>;
+  digest: { kind: string; created_at: string; title: string; short: string; text: string } | null;
+  rules: { auto_draft: string; alerts: string };
 }
 
 export interface ModelsOverview {

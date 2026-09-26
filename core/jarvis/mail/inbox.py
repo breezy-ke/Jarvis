@@ -96,7 +96,7 @@ class Inbox:
             query = query.order_by(MailThread.last_message_at.desc())
         async with self._s.session_factory() as session:
             rows = (await session.execute(query.limit(limit))).tuples().all()
-        return [self._item(thread, message) for thread, message in rows]
+        return [self.item(thread, message) for thread, message in rows]
 
     async def find(self, words: str, *, limit: int = 8) -> list[ThreadItem]:
         """Recent conversations whose sender or subject has all of `words`."""
@@ -106,7 +106,7 @@ class Inbox:
             rows = (await session.execute(query)).tuples().all()
         found: list[ThreadItem] = []
         for thread, message in rows:
-            item = self._item(thread, message)
+            item = self.item(thread, message)
             text = f"{item.subject} {item.sender} {item.sender_address}".casefold()
             if all(word in text for word in wanted):
                 found.append(item)
@@ -119,7 +119,7 @@ class Inbox:
             MailMessage, MailMessage.id == MailThread.last_inbound_id
         )
 
-    def _item(self, thread: MailThread, message: MailMessage | None) -> ThreadItem:
+    def item(self, thread: MailThread, message: MailMessage | None) -> ThreadItem:
         store = self._store
         address = message.from_address if message is not None else ""
         names = store.dec_json(message.names_enc, {}) if message is not None else {}

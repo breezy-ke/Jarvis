@@ -272,6 +272,8 @@ class TriageWorker:
             row = await session.get(MailThread, thread_id, with_for_update=True)
             if row is None or row.last_inbound_id != latest.id:
                 return None  # a newer message arrived meanwhile: it gets its own turn
+            if row.triaged_message_id != latest.id:  # your correction was for the older email
+                row.owner_category, row.owner_checked_at = None, None
             row.category = triage.category
             row.priority = triage.priority
             row.needs_reply = triage.needs_reply

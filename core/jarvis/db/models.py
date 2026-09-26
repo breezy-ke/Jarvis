@@ -499,12 +499,27 @@ class MailDraft(Base):
         UUID(as_uuid=True), ForeignKey("action_proposals.id", ondelete="SET NULL")
     )
     content_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # to, cc, subject, body (JSON)
-    original_hash: Mapped[str | None] = mapped_column(String(64))  # Jarvis's own first version
+    original_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # Jarvis's first version
+    original_hash: Mapped[str | None] = mapped_column(String(64))  # of that version's body
     gmail_draft_id: Mapped[str | None] = mapped_column(String(64))
     gmail_body_hash: Mapped[str | None] = mapped_column(String(64))
-    origin: Mapped[str] = mapped_column(String(8))  # "auto" or "owner"
+    origin: Mapped[str] = mapped_column(String(8))  # "auto", "owner" (the app) or "chat"
     status: Mapped[str] = mapped_column(String(16), index=True)
     status_reason: Mapped[str | None] = mapped_column(Text)
     sent_message_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(TZ)
     updated_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class MailVerdict(Base):
+    """Your word on how an email was sorted ("Is this right?"): what `make eval` scores against."""
+
+    __tablename__ = "mail_verdicts"
+
+    message_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("mail_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    thread_id: Mapped[str] = mapped_column(String(64), index=True)
+    category: Mapped[str] = mapped_column(String(16))  # yours
+    jarvis_category: Mapped[str | None] = mapped_column(String(16))  # what triage had said
+    decided_at: Mapped[datetime] = mapped_column(TZ)
