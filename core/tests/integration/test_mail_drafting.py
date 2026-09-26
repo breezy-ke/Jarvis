@@ -578,6 +578,22 @@ async def test_labels_are_applied_only_once_autonomy_is_on(
     await run_due(mail)
     assert [n for n in jarvis_labels(second) if n.startswith("Jarvis/")] == ["Jarvis/Urgent"]
 
+    # You delete Jarvis/Lead in Gmail: Jarvis makes it again the next time it needs it.
+    [lead] = [i for i, name in mail.fake.labels.items() if name == "Jarvis/Lead"]
+    del mail.fake.labels[lead]
+    async with transaction(mail.services.session_factory) as session:
+        relabel = await mail.services.policy.propose(
+            session,
+            kind="email.label",
+            payload={"message_id": second, "label": "Jarvis/Lead"},
+            rationale="Re-sorted",
+            created_by="agent:triage",
+        )
+    await run_due(mail)
+    assert (await proposal(mail, relabel.id)).status == Status.EXECUTED
+    assert [n for n in jarvis_labels(second) if n.startswith("Jarvis/")] == ["Jarvis/Lead"]
+    assert lead not in mail.fake.labels  # a new label, with a new id
+
     # Only Jarvis labels exist here: nothing can be trashed, archived or marked spam.
     for label in ("TRASH", "SPAM", "INBOX"):
         async with transaction(mail.services.session_factory) as session:

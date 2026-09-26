@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from jarvis.mail.gmail import SendOutcomeUnknown, SendRefused
+from jarvis.mail.gmail import GmailError, SendOutcomeUnknown, SendRefused
 from jarvis.mail.mime import build_message, to_raw
 from jarvis.policy.registry import ActionRegistry, ActionSpec, ExecutionContext, OutcomeUnknownError
 
@@ -222,10 +222,17 @@ def register_mail_actions(registry: ActionRegistry, mail: MailService) -> None:
 
     async def label(ctx: ExecutionContext, payload: EmailLabelPayload) -> dict[str, Any]:
         client = mail.client()
-        ids = await mail.label_ids()
-        add = ids[payload.label]
-        others = [label_id for name, label_id in ids.items() if name != payload.label]
-        await client.modify_message(payload.message_id, add=[add], remove=others)
+
+        async def apply(ids: dict[str, str]) -> None:
+            others = [label_id for name, label_id in ids.items() if name != payload.label]
+            await client.modify_message(payload.message_id, add=[ids[payload.label]], remove=others)
+
+        try:
+            await apply(await mail.label_ids())
+        except GmailError as exc:
+            if exc.status != 400:
+                raise
+            await apply(await mail.label_ids(refresh=True))  # one was deleted in Gmail meanwhile
         return {"label": payload.label}
 
     async def hold(ctx: ExecutionContext, payload: CalendarHoldPayload) -> dict[str, Any]:

@@ -115,6 +115,34 @@ async def test_l3_with_a_warning_drops_to_approval(
     assert "Needs your review" in (proposal.status_reason or "")
 
 
+async def test_a_held_proposal_waits_even_at_l3(
+    session_factory: SessionFactory, clock: FrozenClock
+) -> None:
+    engine, _ = build_engine(clock=clock)
+    async with transaction(session_factory) as session:
+        held = await engine.propose(
+            session,
+            kind="test.auto",
+            payload={"text": "hello"},
+            rationale="test",
+            created_by="agent:test",
+            hold_reason="Suggested where an email could have asked for it",
+        )
+    assert held.status == Status.PENDING
+    assert held.status_reason == "Suggested where an email could have asked for it"
+    asked = await propose(session_factory, engine, "test.ask")
+    async with transaction(session_factory) as session:
+        also_held = await engine.propose(
+            session,
+            kind="test.ask",
+            payload={"text": "hello again"},
+            rationale="test",
+            created_by="agent:test",
+            hold_reason="Check it first",
+        )
+    assert (asked.status_reason, also_held.status_reason) == (None, "Check it first")
+
+
 async def test_blocked_validation_refuses(
     session_factory: SessionFactory, clock: FrozenClock
 ) -> None:

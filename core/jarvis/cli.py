@@ -238,6 +238,13 @@ def _bench_voice(args: argparse.Namespace) -> int:
         return 1
 
 
+def _eval_triage(args: argparse.Namespace) -> int:
+    from jarvis.config import get_settings
+    from jarvis.mail.evaluate import run_triage_eval
+
+    return asyncio.run(run_triage_eval(get_settings(), limit=args.limit))
+
+
 def _doctor(args: argparse.Namespace) -> int:
     from jarvis.doctor import run_doctor
 
@@ -276,6 +283,15 @@ def main(argv: list[str] | None = None) -> int:
     p_bench.add_argument("--url", default="ws://127.0.0.1:8080/api/voice/ws")
     p_bench.add_argument("--audio", help="a 16 kHz mono WAV question (default: a recorded one)")
     p_bench.set_defaults(func=_bench_voice)
+    p_eval = sub.add_parser("eval", help="score how well Jarvis does its work on your own data")
+    evals = p_eval.add_subparsers(dest="suite", required=True)
+    p_triage = evals.add_parser(
+        "triage", help="sorting email, against the emails you checked in the Inbox"
+    )
+    p_triage.add_argument(
+        "--limit", type=int, default=200, help="how many checked emails, newest first"
+    )
+    p_triage.set_defaults(func=_eval_triage)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

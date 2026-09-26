@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from sqlalchemy import select
 
-from jarvis.db.models import MailContact, MailMessage, MailThread
+from jarvis.db.models import MailContact, MailMessage, MailThread, OAuthToken
 from jarvis.db.session import transaction
 from jarvis.llm.router import RouterError
 from jarvis.mail.signals import LABELS, Sender, is_hard, message_signals, sender_info
@@ -202,25 +202,62 @@ class TriageWorker:
         return ids[:limit]
 
     async def triage_thread(self, thread_id: str) -> Triage | None:
+        """Sort the thread's latest email from someone else, and save the result."""
+        services, store = self._s, self._store
+        try:
+            triage = await self.assess(thread_id)
+        except RouterError as exc:
+            self._failed[thread_id] = services.clock.now()
+            log.warning("mail: triage paused, no model available: %s", exc)
+            return None
+        if triage is None:
+            return None
+        async with transaction(services.session_factory) as session:
+            row = await session.get(MailThread, thread_id, with_for_update=True)
+            if row is None or row.last_inbound_id != triage.message_id:
+                return None  # a newer message arrived meanwhile: it gets its own turn
+            if row.triaged_message_id != triage.message_id:  # you'd checked the older email
+                row.owner_category, row.owner_checked_at = None, None
+            row.category = triage.category
+            row.priority = triage.priority
+            row.needs_reply = triage.needs_reply
+            row.summary_enc = store.enc(triage.summary) if triage.summary else None
+            row.details_enc = store.enc_json({"tasks": triage.tasks, "dates": triage.dates})
+            row.signals = triage.signals
+            row.triaged_message_id = triage.message_id
+            row.triaged_at = services.clock.now()
+            row.triage_model = triage.model
+        self._failed.pop(thread_id, None)
+        return triage
+
+    async def assess(self, thread_id: str, *, message_id: str | None = None) -> Triage | None:
+        """Sort one email without saving anything: the thread's latest from someone
+        else, or `message_id` with the thread as it was when that email arrived.
+
+        Raises RouterError when no model can do it.
+        """
         services, store = self._s, self._store
         async with services.session_factory() as session:
             thread = await session.get(MailThread, thread_id)
-            if thread is None or thread.last_inbound_id is None:
+            wanted = message_id or (thread.last_inbound_id if thread is not None else None)
+            latest = await session.get(MailMessage, wanted) if wanted else None
+            if thread is None or latest is None or latest.thread_id != thread_id:
                 return None
-            messages = list(
-                await session.scalars(
-                    select(MailMessage)
-                    .where(MailMessage.thread_id == thread_id)
-                    .where(MailMessage.deleted.is_(False))
-                    .order_by(MailMessage.internal_date.desc(), MailMessage.id.desc())
-                    .limit(CONTEXT_MESSAGES)
-                )
+            query = (
+                select(MailMessage)
+                .where(MailMessage.thread_id == thread_id)
+                .where(MailMessage.deleted.is_(False))
+                .order_by(MailMessage.internal_date.desc(), MailMessage.id.desc())
+                .limit(CONTEXT_MESSAGES)
             )
-            latest = await session.get(MailMessage, thread.last_inbound_id)
-            if latest is None:
-                return None
+            if message_id is not None:
+                query = query.where(MailMessage.internal_date <= latest.internal_date)
+            messages = list(await session.scalars(query))
             contact = await session.get(MailContact, latest.from_address)
             profile = (await services.profiles.current(session)).profile
+            account = await session.scalar(
+                select(OAuthToken.account_email).where(OAuthToken.account_email.is_not(None))
+            )
         contacts = profile.people.contacts
         names = store.dec_json(latest.names_enc, {})
         subject = store.dec(latest.subject_enc)
@@ -238,23 +275,21 @@ class TriageWorker:
             display_name=names.get(latest.from_address, ""),
             sender=sender,
             contacts=contacts,
+            owner=(
+                account,
+                (profile.identity.full_name or "", profile.identity.preferred_name or ""),
+            ),
         )
         model: str | None = None
         if "newsletter" in signals and not sender.known and not is_hard(signals):
             result = TriageResult(category="newsletter", priority=1)  # no model needed
         else:
             prompt = self._prompt(list(reversed(messages)), signals, sender, profile)
-            try:
-                outcome = await services.router.run(self._agent, prompt, task="triage")
-            except RouterError as exc:
-                self._failed[thread_id] = services.clock.now()
-                log.warning("mail: triage paused, no model available: %s", exc)
-                return None
+            outcome = await services.router.run(self._agent, prompt, task="triage")
             result = outcome.output
             model = outcome.model_ref
         result = apply_rules(result, signals)
-        tz = services.policies_config.tz
-        triage = Triage(
+        return Triage(
             thread_id=thread_id,
             message_id=latest.id,
             category=result.category,
@@ -262,29 +297,12 @@ class TriageWorker:
             needs_reply=result.needs_reply,
             summary=result.summary,
             tasks=result.tasks,
-            dates=_dates(result.dates, tz),
+            dates=_dates(result.dates, services.policies_config.tz),
             signals=signals,
             sender=sender,
             sender_address=latest.from_address,
             model=model,
         )
-        async with transaction(services.session_factory) as session:
-            row = await session.get(MailThread, thread_id, with_for_update=True)
-            if row is None or row.last_inbound_id != latest.id:
-                return None  # a newer message arrived meanwhile: it gets its own turn
-            if row.triaged_message_id != latest.id:  # your correction was for the older email
-                row.owner_category, row.owner_checked_at = None, None
-            row.category = triage.category
-            row.priority = triage.priority
-            row.needs_reply = triage.needs_reply
-            row.summary_enc = store.enc(triage.summary) if triage.summary else None
-            row.details_enc = store.enc_json({"tasks": triage.tasks, "dates": triage.dates})
-            row.signals = triage.signals
-            row.triaged_message_id = latest.id
-            row.triaged_at = services.clock.now()
-            row.triage_model = model
-        self._failed.pop(thread_id, None)
-        return triage
 
     def _prompt(
         self, messages: list[MailMessage], signals: list[str], sender: Sender, profile: Any

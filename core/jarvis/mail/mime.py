@@ -25,11 +25,12 @@ from email.utils import formataddr, getaddresses, parseaddr
 from html.parser import HTMLParser
 from typing import Any
 
-from jarvis.security.untrusted import injection_signals
+from jarvis.security.untrusted import injection_signals, sanitize
 
 log = logging.getLogger("jarvis.mail")
 
 MAX_BODY_CHARS = 100_000
+MAX_LINKS = 50
 _ACTION_HEADER = "X-Jarvis-Action"
 _RE_PREFIX = re.compile(r"^\s*((re|aw|sv|fw|fwd|tr)\s*(\[\d+\])?\s*:\s*)+", re.IGNORECASE)
 _WS_RE = re.compile(r"[ \t\f\v]+")
@@ -66,6 +67,7 @@ class ParsedMessage:
     # AI-directed phrasing in text you can't see: CSS-hidden HTML, or a plain-text
     # part that says something different from what Gmail shows you.
     concealed_signals: tuple[str, ...] = ()
+    links: list[str] = field(default_factory=list)  # link targets in the HTML, shown or not
     jarvis_action: str | None = None
     size: int = 0
 
@@ -154,13 +156,19 @@ def parse_gmail_message(resource: dict[str, Any]) -> ParsedMessage:
     plain = "\n".join(t for t in texts["text/plain"] if t)
     hidden = False
     concealed = ""
+    links: list[str] = []
     if html:
         visible = html_to_text(html)
         body, hidden, concealed = visible.text, visible.hidden, visible.hidden_text
-        if plain and plain_differs(plain, body):
-            concealed += "\n" + plain
+        links = visible.links
+        if plain and (plain_differs(plain, body) or says_more(plain, body)):
+            concealed += "\n" + plain  # what text-only readers get, and you don't see
     else:
         body = plain
+    smuggled = smuggled_text("\n".join((first("subject"), plain, html)))
+    if smuggled:
+        hidden = True
+        concealed += "\n" + smuggled
     from_name, from_address = parseaddr(_clean_header(first("from")))
     auth: dict[str, str] = {}
     for line in headers.get("authentication-results", [])[:1]:  # the receiving server's own
@@ -191,6 +199,7 @@ def parse_gmail_message(resource: dict[str, Any]) -> ParsedMessage:
         hidden_text=hidden,
         plain_text=_tidy(plain)[:MAX_BODY_CHARS] if html else "",
         concealed_signals=injection_signals(concealed[:20_000]) if concealed.strip() else (),
+        links=links,
         jarvis_action=first(_ACTION_HEADER).strip() or None,
         size=int(resource.get("sizeEstimate") or 0),
     )
@@ -201,6 +210,11 @@ def plain_differs(plain: str, visible: str) -> bool:
     visible_words = set(visible.lower().split())
     extra = [w for w in plain.lower().split() if w not in visible_words]
     return len(extra) > max(15, len(plain.split()) // 4)
+
+
+def says_more(plain: str, visible: str) -> bool:
+    """True when a plain-text alternative has AI-directed phrasing the visible HTML lacks."""
+    return bool(set(sanitize(plain).signals) - set(sanitize(visible).signals))
 
 
 def _tidy(text: str) -> str:
@@ -257,11 +271,33 @@ _HIDING_STYLE = re.compile(
 )
 
 
+# Hidden from the reader but still text (checked); the rest of _SKIP is code (not checked).
+_CODE = _SKIP - {"template", "noscript"}
+_TAG_CHARS = re.compile("[\U000e0000-\U000e007f]+")
+
+
+def smuggled_text(text: str) -> str:
+    """Words hidden in Unicode "tag" characters: invisible to you, readable by a model.
+
+    Flag emoji use a few tag letters too ("gbsct"), so only runs that spell out
+    something with spaces in it count.
+    """
+    found: list[str] = []
+    for run in _TAG_CHARS.findall(text):
+        decoded = "".join(
+            chr(ord(ch) - 0xE0000) for ch in run if 0x20 <= ord(ch) - 0xE0000 < 0x7F
+        ).strip()
+        if len(decoded) >= 8 and " " in decoded:
+            found.append(decoded)
+    return "\n".join(found)
+
+
 @dataclass
 class VisibleText:
     text: str
     hidden: bool  # some text was hidden from the reader (and dropped here)
     hidden_text: str = ""  # what was hidden, for checks only
+    links: list[str] = field(default_factory=list)  # every link target
 
 
 class _Visible(HTMLParser):
@@ -272,6 +308,7 @@ class _Visible(HTMLParser):
         self.hidden_chars = 0
         self._stack: list[tuple[str, bool]] = []
         self._links: list[str | None] = []
+        self.hrefs: list[str] = []  # every link target, visible or not, for the link checks
 
     @property
     def _hidden(self) -> bool:
@@ -296,6 +333,8 @@ class _Visible(HTMLParser):
         self._stack.append((tag, hidden))
         if tag == "a":
             href = values.get("href", "").strip()
+            if href and len(self.hrefs) < MAX_LINKS:
+                self.hrefs.append(href[:2_000])
             self._links.append(href if href.lower().startswith(("http", "mailto:")) else None)
 
     def handle_endtag(self, tag: str) -> None:
@@ -316,11 +355,16 @@ class _Visible(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._hidden:
-            if self._stack[-1][0] not in _SKIP and not any(t in _SKIP for t, _ in self._stack):
+            if not any(t in _CODE for t, _ in self._stack):  # text, not script or style
                 self.hidden_chars += len(data.strip())
                 self.hidden_out.append(data)
             return
         self.out.append(data)
+
+    def handle_comment(self, data: str) -> None:
+        # Never shown, but checked for words aimed at an AI. Not counted as hidden
+        # text: Outlook's conditional comments are in half the email ever sent.
+        self.hidden_out.append(data)
 
 
 def html_to_text(html: str) -> VisibleText:
@@ -334,6 +378,7 @@ def html_to_text(html: str) -> VisibleText:
         _tidy("".join(parser.out)),
         hidden=parser.hidden_chars > 20,
         hidden_text=_tidy(" ".join(parser.hidden_out))[:20_000],
+        links=parser.hrefs,
     )
 
 
