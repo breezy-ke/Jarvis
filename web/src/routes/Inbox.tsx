@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { Alert, EmptyState, Skeleton } from "@/components/ui/misc";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { keys, useMailStatus } from "@/lib/queries";
 import type {
@@ -148,21 +148,28 @@ export function InboxPage() {
             </TabsTrigger>
           ))}
         </TabsList>
-      </Tabs>
-      {threads.isLoading ? <Skeleton className="h-40" /> : null}
-      {threads.error ? <Alert tone="error">{threads.error.message}</Alert> : null}
-      {threads.data && !threads.data.length ? (
-        <EmptyState icon={<InboxIcon className="size-8" />} title="Nothing here">
-          {tab === "attention" ? "Nothing needs you right now." : null}
-        </EmptyState>
-      ) : null}
-      <ul className="space-y-2" aria-label="Conversations">
-        {(threads.data ?? []).map((thread) => (
-          <li key={thread.id}>
-            <ThreadRow thread={thread} />
-          </li>
+        {INBOX_TABS.map((item) => (
+          <TabsContent key={item.id} value={item.id} className="space-y-2">
+            {item.id !== tab ? null : threads.isLoading ? (
+              <Skeleton className="h-40" />
+            ) : threads.error ? (
+              <Alert tone="error">{threads.error.message}</Alert>
+            ) : !threads.data?.length ? (
+              <EmptyState icon={<InboxIcon className="size-8" />} title="Nothing here">
+                {tab === "attention" ? "Nothing needs you right now." : null}
+              </EmptyState>
+            ) : (
+              <ul className="space-y-2" aria-label="Conversations">
+                {threads.data.map((thread) => (
+                  <li key={thread.id}>
+                    <ThreadRow thread={thread} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </TabsContent>
         ))}
-      </ul>
+      </Tabs>
     </div>
   );
 }
@@ -207,7 +214,10 @@ export function ThreadPage() {
     queryKey: keys.thread(threadId),
     queryFn: () => api.get<ThreadView>(`/api/mail/threads/${threadId}`),
     // While a reply is on its way out, keep an eye on it.
-    refetchInterval: (q) => (q.state.data?.draft?.proposal?.status === "approved" ? 2_000 : false),
+    refetchInterval: (q) =>
+      ["approved", "executing"].includes(q.state.data?.draft?.proposal?.status ?? "")
+        ? 2_000
+        : false,
   });
   if (query.isLoading) return <Skeleton className="h-80" />;
   if (query.error || !query.data) {

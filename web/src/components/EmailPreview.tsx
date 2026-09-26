@@ -45,8 +45,10 @@ export function EmailPreview({
               <dd className="break-all font-medium">{addresses.join(", ")}</dd>
             </div>
           ))}
-        <dt className="text-muted-foreground">Subject</dt>
-        <dd className="break-words font-medium">{String(payload.subject ?? "")}</dd>
+        <div className="contents">
+          <dt className="text-muted-foreground">Subject</dt>
+          <dd className="break-words font-medium">{String(payload.subject ?? "")}</dd>
+        </div>
       </dl>
       <div className="whitespace-pre-wrap break-words rounded-md border bg-background p-3">
         {body}
