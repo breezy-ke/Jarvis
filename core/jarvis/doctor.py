@@ -9,12 +9,20 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import text
 
+from jarvis.brief.config import (
+    BriefConfig,
+    BriefConfigError,
+    SourcesConfig,
+    load_brief_config,
+    load_sources_config,
+)
 from jarvis.clock import Clock, SystemClock
 from jarvis.config import Settings, get_settings
 from jarvis.ingestion.google import GoogleConnection
@@ -630,6 +638,271 @@ async def check_email(
         await engine.dispose()
 
 
+# --- The tech brief and research ------------------------------------------------------------
+
+_CHANNEL_WORDS = {
+    "app": "the app",
+    "push": "a notification",
+    "telegram": "Telegram",
+    "inbox": "a copy in your inbox",
+    "audio": "an audio version",
+}
+
+
+def check_brief_config(
+    settings: Settings,
+) -> tuple[list[Check], BriefConfig | None, SourcesConfig | None]:
+    off = "Fix the file, then `make restart`. Until then the brief is off; the rest of Jarvis runs."
+    try:
+        config = load_brief_config(settings.brief_config_path)
+    except BriefConfigError as exc:
+        return [Check(FAIL, "brief.yaml", str(exc), off)], None, None
+    on = [name for name, enabled in config.channels.model_dump().items() if enabled]
+    checks = [
+        Check(
+            OK,
+            "brief.yaml",
+            f"every morning at {config.time}: " + ", ".join(_CHANNEL_WORDS[c] for c in on),
+        )
+    ]
+    try:
+        sources = load_sources_config(settings.sources_config_path)
+    except BriefConfigError as exc:
+        return [*checks, Check(FAIL, "sources.yaml", str(exc), off)], config, None
+    checks.append(
+        Check(OK, "sources.yaml", f"{len(sources.enabled)} of {len(sources.sources)} sources on")
+    )
+    return checks, config, sources
+
+
+def _clock(value: str) -> str | None:
+    """ "7am", "07:00" or "7:00" as "07:00"; None if it isn't a time of day."""
+    match = re.fullmatch(r"\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\s*", value.lower())
+    if match is None:
+        return None
+    hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    if match.group(3):
+        hour = hour % 12 + (12 if match.group(3).startswith("p") else 0)
+    return f"{hour:02d}:{minute:02d}" if hour < 24 and minute < 60 else None
+
+
+def brief_checks(
+    *,
+    config: BriefConfig,
+    sources: SourcesConfig,
+    latest: Any | None,
+    streak: int,
+    states: Mapping[str, Any],
+    today: date,
+    profile_time: str | None,
+) -> list[Check]:
+    """How the brief is doing: its last delivery, the on-time streak and its sources."""
+    checks: list[Check] = []
+    wanted = _clock(profile_time) if profile_time else None
+    if wanted and wanted != config.time:
+        checks.append(
+            Check(
+                WARN,
+                "Brief time",
+                f"your profile says {profile_time}, but brief.yaml says {config.time}",
+                f'Jarvis follows brief.yaml: set `time: "{wanted}"` there and `make restart`, '
+                "or change the time in your profile.",
+            )
+        )
+    if latest is None:
+        checks.append(
+            Check(
+                OK,
+                "Last brief",
+                f"none yet: the first arrives at {config.time} (or tap Make it now on the "
+                "Brief page)",
+            )
+        )
+    else:
+        day = f"{latest.day:%a %d %b}"
+        if latest.status == "skipped":
+            checks.append(
+                Check(
+                    WARN,
+                    "Last brief",
+                    f"{day}: skipped, because Jarvis was off until that day had passed",
+                    "Keep the PC on overnight (docs/runbook.md, Tech brief).",
+                )
+            )
+        elif latest.status == "ready":
+            checks.append(Check(OK, "Last brief", f"{day}: ready, going out at {config.time}"))
+        elif (today - latest.day).days > 1:
+            checks.append(
+                Check(
+                    WARN,
+                    "Last brief",
+                    f"{day}, and none since",
+                    "Is Jarvis running? `make up`, then `make logs` shows any brief errors.",
+                )
+            )
+        elif latest.on_time is False:
+            checks.append(
+                Check(
+                    WARN,
+                    "Last brief",
+                    f"{day}: arrived late",
+                    f"Was the PC off or asleep at {config.time}? See docs/runbook.md (Tech brief).",
+                )
+            )
+        else:
+            checks.append(Check(OK, "Last brief", f"{day}: on time"))
+        failed = {
+            channel: delivery
+            for channel, delivery in (latest.deliveries or {}).items()
+            if delivery.get("status") == "failed"
+        }
+        if failed and latest.day == today:
+            first = next(iter(failed.values())).get("error") or "no details"
+            checks.append(
+                Check(
+                    WARN,
+                    "Brief delivery",
+                    f"not yet to {', '.join(failed)} ({first})",
+                    "Jarvis tries again every half hour today; the Brief page shows each channel.",
+                )
+            )
+    goal = "the 7-day goal is met" if streak >= 7 else "7 in a row is the goal"
+    if streak:
+        checks.append(
+            Check(OK, "On-time streak", f"{streak} day{'' if streak == 1 else 's'}; {goal}")
+        )
+    failing = [s for s in sources.enabled if (st := states.get(s.id)) and st.failures >= 3]
+    if failing:
+        detail = "; ".join(f"{s.name} ({states[s.id].last_error or 'no details'})" for s in failing)
+        checks.append(
+            Check(
+                WARN,
+                "Brief sources",
+                f"{len(failing)} failing: {detail}"[:600],
+                "Jarvis keeps trying every hour. If one keeps failing, check its address in "
+                "config/sources.yaml or set `enabled: false` for it.",
+            )
+        )
+    elif any(s.id in states for s in sources.enabled):
+        checks.append(Check(OK, "Brief sources", "reading fine"))
+    else:
+        checks.append(
+            Check(
+                WARN,
+                "Brief sources",
+                "not read yet",
+                "Start Jarvis with `make up`: it reads every source within a minute.",
+            )
+        )
+    return checks
+
+
+async def check_research(settings: Settings, *, online: bool) -> Check:
+    from jarvis.research.searxng import SearXNG
+
+    search = SearXNG(settings.searxng_url)
+    try:
+        problem = await search.healthy()
+        if problem is None and online:
+            problem = await search.reachable()  # a real search, in JSON
+    finally:
+        await search.aclose()
+    if problem is None:
+        return Check(OK, "SearXNG (research)", "answers searches" if online else "running")
+    return Check(
+        WARN,
+        "SearXNG (research)",
+        problem,
+        "It starts with `make up`; `make logs` shows its errors. Web research needs it "
+        "(the brief doesn't).",
+    )
+
+
+async def check_sources_online(
+    settings: Settings, sources: SourcesConfig, *, fetcher: Any = None
+) -> Check:
+    from jarvis.brief.sources import probe_address
+    from jarvis.security.fetch import FetchError, SafeFetcher
+
+    fetcher = fetcher or SafeFetcher(allow_private=settings.fetch_allow_private)
+    gate = asyncio.Semaphore(6)
+
+    async def probe(address: str) -> str | None:
+        async with gate:
+            try:
+                await fetcher.get(address, max_bytes=12_000_000)
+            except FetchError as exc:
+                return str(exc)
+        return None
+
+    try:
+        results = await asyncio.gather(*(probe(probe_address(s)) for s in sources.enabled))
+    finally:
+        await fetcher.aclose()
+    failing = [(s, why) for s, why in zip(sources.enabled, results, strict=True) if why]
+    total = len(sources.enabled)
+    if not failing:
+        return Check(OK, "Brief sources (online)", f"all {total} answered")
+    detail = "; ".join(f"{s.name}: {why}" for s, why in failing[:6])
+    return Check(
+        WARN,
+        "Brief sources (online)",
+        f"{len(failing)} of {total} didn't answer: {detail}"[:600],
+        "A site can be down for a while. If one never answers, check its address in "
+        "config/sources.yaml or set `enabled: false` for it.",
+    )
+
+
+async def check_brief(
+    settings: Settings, *, online: bool, clock: Clock | None = None
+) -> list[Check]:
+    from sqlalchemy import select
+
+    from jarvis.audit.log import AuditLog
+    from jarvis.brief.service import on_time_streak
+    from jarvis.db.models import Brief, BriefSource
+    from jarvis.db.session import create_engine, create_session_factory
+    from jarvis.profile.service import ProfileService
+
+    checks, config, sources = check_brief_config(settings)
+    checks.append(await check_research(settings, online=online))
+    if config is None or sources is None:
+        return checks
+    clock = clock or SystemClock()
+    engine = create_engine(settings.database_url)
+    try:
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            latest = await session.scalar(select(Brief).order_by(Brief.day.desc()).limit(1))
+            rows = (
+                await session.execute(
+                    select(Brief.day, Brief.on_time).order_by(Brief.day.desc()).limit(90)
+                )
+            ).all()
+            states = {row.id: row for row in await session.scalars(select(BriefSource))}
+            profiles = ProfileService(audit=AuditLog(clock), clock=clock)
+            profile = (await profiles.current(session)).profile
+    except Exception as exc:  # the database check explains what's wrong
+        reason = f"couldn't read the brief's records ({type(exc).__name__})"
+        return [*checks, Check(WARN, "Tech brief", reason, "Fix the Database check first.")]
+    finally:
+        await engine.dispose()
+    tz = load_policies(settings.config_dir / "policies.yaml").tz
+    today = clock.now().astimezone(tz).date()
+    checks += brief_checks(
+        config=config,
+        sources=sources,
+        latest=latest,
+        streak=on_time_streak({row.day: row.on_time for row in rows}, today),
+        states=states,
+        today=today,
+        profile_time=profile.schedule.brief_time,
+    )
+    if online:
+        checks.append(await check_sources_online(settings, sources))
+    return checks
+
+
 def render(checks: list[Check]) -> str:
     lines = []
     for c in checks:
@@ -648,6 +921,7 @@ async def run_doctor(*, online: bool = False) -> int:
     checks += await check_voice(settings)
     async with httpx.AsyncClient() as client:
         checks += await check_email(settings, client, online=online)
+        checks += await check_brief(settings, online=online)
         checks.append(await check_telegram(settings, client, online=online))
         checks += await check_ollama(settings, models, client)
         if models is not None:

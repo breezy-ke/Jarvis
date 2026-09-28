@@ -318,6 +318,17 @@ async def read_kev(
     return SourceRead(items=items)
 
 
+def probe_address(source: Source) -> str:
+    """One address that shows whether a source is reachable (for `make doctor ONLINE=1`)."""
+    if isinstance(source, FeedSource | KEVSource):
+        return source.url
+    if isinstance(source, HNSource):
+        return f"{HN_API}/topstories.json"
+    if isinstance(source, GitHubRisingSource):
+        return f"{GITHUB_API}/search/repositories?q=stars%3A%3E1000&per_page=1"
+    return f"{GITHUB_API}/advisories?per_page=1"
+
+
 async def read_source(
     source: Source,
     fetcher: SafeFetcher,

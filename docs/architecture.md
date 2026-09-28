@@ -8,6 +8,8 @@ parts:
 - **web**: a React app (PWA) served by the core.
 - **speech**: a local speech server that hears (faster-whisper) and speaks
   (Kokoro), used only by the core.
+- **searxng**: a private metasearch engine for web research, used only by the
+  core.
 - **satellite** (optional): a Windows tray app that listens for "Hey Jarvis".
 
 Everything stateful lives in one Postgres database.
@@ -32,6 +34,7 @@ Everything stateful lives in one Postgres database.
    Cloud AI (only the data each is allowed): Groq · Gemini · OpenRouter · (paid, off by default)
    Google (once you connect it): the core checks Gmail every minute and calls Calendar
    Telegram (if you set it up): the core fetches your messages; nothing listens publicly
+   The web: the brief's news sources hourly (safe fetcher); searches via searxng (on the stack)
 ```
 
 - **Ports:** every port binds to `127.0.0.1`. Postgres and the speech server
@@ -60,10 +63,11 @@ Everything stateful lives in one Postgres database.
    - `list_capabilities`
    - `inbox_overview` and `draft_email_reply` (email; a draft always waits
      for approval)
+   - `todays_brief` and `research` (web text: see Tech brief below)
    - `propose_action`, the only way to affect anything outside Jarvis
 
-   Once someone else's words (an email, a forwarded message) are in what the
-   agent sees, from a tool or from the recent conversation, `remember` and
+   Once someone else's words (an email, a web page, a forwarded message) are in
+   what the agent sees, from a tool or from the recent conversation, `remember` and
    `forget` refuse, and every proposal waits for you.
 4. Afterwards, a background job extracts new facts from the conversation. They
    are stored as `inferred`, so they wait for your review.
@@ -113,6 +117,47 @@ Gmail ─► sync (every minute) ─► encrypted store ─► signals (code) �
                                                                                                   ▼
             you approve ─► 60 s undo ─► Gmail send ◄─ email.send (L2) ◄─ recipients by code ◄─ drafting model (body only)
 ```
+
+**Tech brief** (`core/jarvis/brief/`; [ADR 0010](adr/0010-brief-from-feeds-public-summaries-private-notes.md)):
+
+1. **Read, hourly:** each source in `config/sources.yaml` (RSS and Atom feeds;
+   the Hacker News, GitHub and CISA APIs) through the safe fetcher, with
+   conditional requests. Each story is stored once (tracking parameters
+   removed; a Hacker News post joins the article it links to), with a local
+   embedding.
+2. **Prepare, at 06:40:**
+   1. The window: everything since the last brief you got, at most 72 hours,
+      and never a story an earlier brief had.
+   2. Ranking by code (`rank.py`): source weight × freshness × closeness to
+      your profile × your 👍/👎 × boosts. Near-identical stories merge.
+   3. The security watch by code, from the advisory data.
+   4. Articles read where robots.txt allows. A public model
+      (`public_summarize`) writes neutral summaries of public text. A private
+      model (`brief`) writes why each story matters to you, one thing to do
+      today, and the spoken version.
+   5. The audio version (the speech server, encoded as MP3 on the PC).
+3. **Deliver, at 07:00:** to the app, a push, Telegram (with 👍/👎 and a voice
+   note) and a copy placed in your inbox (`messages.insert`). Each channel
+   gets it once, and a failed one is retried that day.
+
+A loop in the core does the timing. It wakes when the next step is due, and
+at least every 30 seconds, and compares the clock with the database, so a
+restart carries on where it stopped. After a morning offline the brief goes
+out the same day; a missed day is skipped.
+
+```
+sources ─► safe fetcher (hourly) ─► stories (once each) ─► rank (code) + security watch (code)
+                                                                     │
+         articles (robots.txt) ─► summaries (public model, no profile) ─► notes + script (private model)
+                                                                     │
+       07:00: app · push · Telegram (👍/👎, voice note) · inbox copy ◄─┴─► your votes ─► tomorrow's ranking
+```
+
+**Research** (`core/jarvis/research/`): the `research` chat tool asks SearXNG
+(on the stack) and reads the top four pages with the safe fetcher. A private
+model with no tools answers from them, citing by number. Code keeps only
+citations to pages it gave the model and adds their links. The result is
+wrapped as untrusted, so the conversation's memory locks.
 
 **Voice** (`/api/voice/ws`, a WebSocket; `core/jarvis/voice/protocol.py`
 describes it):
@@ -182,8 +227,10 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
 | `profile/` | The versioned profile schema, completeness, sign-off |
 | `onboarding/` | The 12 interview modules and their agent |
 | `ingestion/` | The consented sources, Google OAuth (PKCE, loopback redirect), style statistics |
-| `security/` | Encryption (Fernet), canonical hashing, secret scanners, untrusted-content handling, one-time pairing codes |
+| `security/` | Encryption (Fernet), canonical hashing, secret scanners, untrusted-content handling, one-time pairing codes, the safe fetcher (public addresses only, robots.txt) |
 | `mail/` | Gmail sync and client, the encrypted mail store, MIME parsing and building, warning signs, triage, drafting, the email actions, who you know, the Inbox, alerts and digests, the triage eval |
+| `brief/` | The tech brief: settings, feeds, sources, reading, ranking, the two writers, building, rendering (app, Telegram, email), delivery and feedback |
+| `research/` | Web research: the SearXNG client and the researcher (pages read safely, citations checked) |
 | `notify/` | Web Push (VAPID), and telling you directly (push and Telegram) |
 | `workflows/` | The executor loop and the scheduled jobs (DBOS) |
 | `voice/` | The voice pipeline (Pipecat), the voice brain, voice confirmations, the speech server client, paired devices, the latency benchmark |
@@ -200,6 +247,9 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
   - nightly maintenance at 03:00, which catches up if the PC was off: purges
     facts you asked to forget, after 7 days, and email text older than 90 days
   - the inbox digests at 07:15 and 17:30 (`config/email.yaml`)
+  - nightly, also the brief's stories and audio after `keep_days`
+- The brief's loop: reading every hour, preparing at 06:40 and delivering
+  at 07:00 (`config/brief.yaml`).
 - The email loops, once Google is connected: sync every minute, and sorting
   as mail arrives.
 - The Telegram bot's long-poll loop, when a bot token is set.
@@ -225,6 +275,9 @@ mic ─► VAD + Smart Turn ─► speech-to-text ─► chat service (voice mod
 | `mail_contacts` | Who you've written to and heard from, for "people you know" |
 | `mail_drafts` | Jarvis's reply drafts, their send proposals and their Gmail copies |
 | `mail_verdicts` | Your "Is this right?" answers, for `make eval` |
+| `brief_sources` | How reading each source went: last success, last error, conditional-request state |
+| `brief_items` | Public stories, repositories and advisories, once each, with embeddings (30 days) |
+| `briefs`, `brief_entries` | Each morning's brief (your notes encrypted), where it was delivered and whether on time; its items with their ranking reasons and your votes |
 | `system_state` | The kill switch, the setup code hash, pairing codes, the Telegram link, the email sync position, the latest digest, and similar |
 
 DBOS keeps its workflow state in its own `dbos` schema in the same database.
@@ -236,6 +289,7 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
   offline app shell; the service worker never caches API calls.
 - **Pages:**
   - Home
+  - Brief (today's and past briefs, 👍/👎, "Why this?", the audio version)
   - Inbox (sorted email, conversations, the reply editor)
   - Chat
   - Talk (voice)
@@ -259,6 +313,9 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
 | `config/policies.yaml` | Autonomy level, risk, validators, undo window and caps for each kind of action; quiet hours |
 | `config/voice.yaml` | The speech models and Jarvis's voice, filler timing, and the exact phrases that confirm or cancel an action |
 | `config/email.yaml` | How often and how far back to read Gmail, how long to keep email text, automatic drafts, alerts, digest times |
+| `config/brief.yaml` | When the brief arrives, its sections and channels, the audio length, how long stories are kept |
+| `config/sources.yaml` | What the brief reads: each source's kind, address, category, weight and how often |
+| `config/searxng/settings.yml` | The private search engine (JSON on, no public instance features) |
 | `config/persona.md` | Jarvis's personality and manners |
 
 ## Testing
@@ -267,9 +324,10 @@ DBOS keeps its workflow state in its own `dbos` schema in the same database.
 |---|---|
 | Core unit and integration | pytest against real Postgres + pgvector, never SQLite: policy engine, router, auth (with a software WebAuthn authenticator), memory, onboarding, ingestion, API. Voice runs over a real socket, with recorded speech going through the real turn detection and a fake speech server. Telegram runs against a fake Bot API. Email runs against a fake Gmail with faults (expired sync points, rate limits, revoked access, lost answers after a send) |
 | Email injection suite | 61 attack emails through the whole email pipeline and the chat agent, with the normal fake model and an obedient one; 100% must pass (security.md, "Email") |
+| Brief and research | A fake web (feeds, the APIs, SearXNG, hostile and private-address pages) and a frozen clock: a simulated week delivered at 07:00 sharp, a morning offline, failed channels retried without duplicates, your votes changing the next day's order, and every prompt to the public model checked for your profile |
 | Property-based | Hypothesis drives random event sequences through the policy engine (see security.md) |
 | Web unit | Vitest + Testing Library |
-| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, talking to Jarvis (through Chromium's fake microphone), connecting Gmail and replying with undo (against the fake Gmail), audit integrity, the phone layout and sign-in again, with axe accessibility scans |
+| End to end | Playwright against a real server and database, with a virtual passkey authenticator. It walks the first-run setup, onboarding, memory, approvals, the kill switch, talking to Jarvis (through Chromium's fake microphone), connecting Gmail and replying with undo (against the fake Gmail), the tech brief and research (against a fake web), audit integrity, the phone layout and sign-in again, with axe accessibility scans |
 | Satellite | pytest on Linux and Windows: the conversation loop against a fake Jarvis that speaks the real protocol (wake word, barge-in, mute, follow-ups, pairing). On Windows also the real wake-word model, the installer's helpers, and the false-wake benchmark on a synthetic room |
 | Deployment | CI builds the Docker image, runs `make secrets`, starts the stack and smoke-tests it (health, the PWA, 401 on protected APIs, setup code, doctor, backup) |
 | Scripts | shellcheck + shfmt for the WSL scripts; PSScriptAnalyzer (Windows PowerShell 5.1 compatibility) and helper tests on a Windows runner for `setup.ps1` and `install-satellite.ps1` |

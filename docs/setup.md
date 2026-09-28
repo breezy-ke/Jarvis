@@ -3,7 +3,7 @@
 This guide takes you from a Windows PC to a working Jarvis you can reach from
 your phone and talk to. Plan on about an hour and a half for steps 1 to 7, plus
 60 to 90 minutes for the onboarding interview in step 8, which you can split
-across sessions.
+across sessions. Steps 9 and 10 take a few minutes each.
 
 Everything runs on your PC. Your keys and passwords go into files on that PC
 only. Never paste them into a chat, an issue or a commit.
@@ -18,7 +18,8 @@ only. Never paste them into a chat, an issue or a commit.
 | 6. Voice | Talk to Jarvis in the app; "Hey Jarvis" on the PC |
 | 7. Telegram (optional) | Chat and approve everyday actions from Telegram |
 | 8. Onboarding interview | Jarvis learns who you are; autonomy stays off until you sign it off |
-| 9. Reboot test | Proof that Jarvis comes back by itself after a power cut |
+| 9. Tech brief and research | A brief every morning at 07:00; web answers with sources |
+| 10. Reboot test | Proof that Jarvis comes back by itself after a power cut |
 
 `make doctor` checks each step and tells you exactly what to fix.
 
@@ -73,7 +74,7 @@ only. Never paste them into a chat, an issue or a commit.
      Microsoft account password if you sign in with one, not your PIN. Windows
      stores it so the task can start Jarvis before anyone logs in. Jarvis never
      sees it. If your organisation forbids stored passwords, run the script
-     with `-NoStoredPassword`, then check with the reboot test (step 9).
+     with `-NoStoredPassword`, then check with the reboot test (step 10).
 4. At the end it runs `make doctor` and prints your **setup code**. Keep that
    window open for step 2.
 
@@ -414,7 +415,51 @@ any time, and the change applies immediately.
 
 ---
 
-## Step 9: The reboot test
+## Step 9: Your tech brief and research
+
+Every morning at **07:00**, as your quiet hours end, Jarvis sends a tech brief:
+
+- **Top stories**, each with why it matters to you.
+- A **security watch** for your stacks' packages, and exploited flaws in web-hosting software.
+- **Kenya and Africa**, **quick hits**, and **one thing to do today**.
+
+It's read from 26 news sites and official APIs, listed in `config/sources.yaml`.
+Every item links to its source.
+
+1. **Nothing to install.** SearXNG, the private web search behind research,
+   starts with `make up`.
+2. **Recommended: the Gemini key from step 4.** Neutral summaries of the
+   (public) articles go to Gemini's free tier. Your profile never does: "why it
+   matters to you" is written by your own GPU, or Groq. Without Gemini, Jarvis
+   uses Groq, or the sites' own summaries.
+3. **Optional: `GITHUB_TOKEN`** in `.env` (the same read-only token as step 5)
+   raises GitHub's limits for "Rising on GitHub" and the security advisories.
+4. In the app, open **Brief** and tap **Make it now** for a first look. From
+   tomorrow it arrives at 07:00 by itself:
+   - **The app:** the Brief page, with a notification and a Home card.
+   - **Telegram**, if you linked it in step 7: 👍/👎 buttons and a voice note.
+     `/brief` sends it again.
+   - **Your Gmail inbox:** a copy labelled `Jarvis/Brief`. It's placed there
+     directly; nothing is sent by email. This needs the full Gmail access from
+     step 3.
+   - **Audio:** the Listen player on the Brief page (about 4 minutes).
+5. **Tap 👍 or 👎** on stories. Tomorrow's order reflects it, and **Why this?**
+   on each story says what lifted it.
+6. **Research:** ask in chat, by voice or on Telegram, for example "research
+   the best Kenyan payment gateways for a Laravel shop". Jarvis searches
+   privately, reads the top pages and answers with numbered sources and their
+   links.
+
+To change the time, sections or channels, edit `config/brief.yaml`. To add or
+remove a source, edit `config/sources.yaml` (see [runbook.md](runbook.md), Tech
+brief). Then run `make restart` and `make doctor`.
+
+Jarvis follows `brief.yaml`, not the brief time in your profile. If the two
+differ, the doctor tells you.
+
+---
+
+## Step 10: The reboot test
 
 Do this once, to prove Jarvis survives a power cut with nobody logged in:
 
