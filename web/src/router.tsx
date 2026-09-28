@@ -14,6 +14,7 @@ import { keys } from "./lib/queries";
 import type { AuthStatus, InboxTab } from "./lib/types";
 import { ActivityPage } from "./routes/Activity";
 import { ApprovalsPage } from "./routes/Approvals";
+import { BriefPage } from "./routes/Brief";
 import { ChatPage } from "./routes/Chat";
 import { HomePage } from "./routes/Home";
 import { InboxPage, ThreadPage } from "./routes/Inbox";
@@ -104,6 +105,16 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
+const briefRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/brief",
+  component: BriefPage,
+  validateSearch: (search: Record<string, unknown>): { day?: string } =>
+    typeof search.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(search.day)
+      ? { day: search.day }
+      : {},
+});
+
 const approvalsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/approvals",
@@ -155,6 +166,7 @@ const routeTree = rootRoute.addChildren([
     talkRoute,
     inboxRoute,
     threadRoute,
+    briefRoute,
     approvalsRoute,
     activityRoute,
     onboardingRoute,

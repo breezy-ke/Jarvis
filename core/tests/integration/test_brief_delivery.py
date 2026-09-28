@@ -130,6 +130,7 @@ async def test_the_brief_arrives_at_seven_on_every_channel_once(morning: Morning
     ready = await morning.brief_on(tuesday)
     assert ready is not None
     assert ready.status == "ready"
+    assert ready.audio_file == "2026-01-06.mp3"  # recorded while preparing
     assert morning.briefs_on_telegram() == []  # nothing goes out before 07:00
     assert morning.brief.seconds_to_next() == 15  # it wakes right on time
 

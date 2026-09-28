@@ -4,6 +4,8 @@ export const port = Number(process.env.E2E_PORT ?? 8766);
 export const baseURL = `http://localhost:${port}`;
 const speechPort = Number(process.env.E2E_SPEECH_PORT ?? 8767);
 const googlePort = Number(process.env.E2E_GOOGLE_PORT ?? 8768);
+// A little fake web (news feeds, articles and SearXNG) for the brief and research.
+const webPort = Number(process.env.E2E_WEB_PORT ?? 8769);
 // A fake Google (sign-in, Gmail, Calendar) with a few emails waiting (see e2e_server.py).
 export const fakeGoogle = `http://127.0.0.1:${googlePort}`;
 
@@ -38,6 +40,7 @@ export const serverEnv: Record<string, string> = {
   E2E_SPEECH_PORT: String(speechPort),
   SPEECH_BASE_URL: `http://127.0.0.1:${speechPort}/v1`,
   E2E_GOOGLE_PORT: String(googlePort),
+  E2E_WEB_PORT: String(webPort),
   JARVIS_GOOGLE_FAKE_BASE: fakeGoogle,
   GOOGLE_OAUTH_CLIENT_ID: "e2e-client",
   GOOGLE_OAUTH_CLIENT_SECRET: "e2e-fake",

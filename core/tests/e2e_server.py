@@ -102,6 +102,77 @@ def start_fake_google(port: int) -> None:
     threading.Thread(target=uvicorn.Server(config).run, daemon=True).start()
 
 
+def start_fake_web(port: int) -> None:
+    """A little public web on this PC: two news feeds, their articles, and SearXNG.
+
+    The brief reads these feeds (a sources file written here) and research asks
+    this SearXNG, so the browser tests never touch the real internet.
+    """
+    import tempfile
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    import uvicorn
+    import yaml
+    from fake_web import FakeWeb  # this script's folder is on the path
+
+    base = f"http://127.0.0.1:{port}"
+    now = datetime.now(UTC)
+    web = FakeWeb()
+    stories = {
+        "nextjs": [
+            ("Next.js 16.1 makes builds twice as fast", "Turbopack is now the default."),
+            ("Server actions get typed errors", "Mistakes show up before you deploy."),
+            ("The image component learns AVIF", "Smaller pages for the same pictures."),
+            ("A new caching guide for app routers", "When to cache and when not to."),
+        ],
+        "techcabal": [
+            ("M-Pesa opens a sandbox for startups", "Safaricom's developer portal grows."),
+            ("A Nairobi startup raises its seed round", "Payments for small shops."),
+        ],
+    }
+    for feed, entries in stories.items():
+        items = []
+        for n, (title, summary) in enumerate(entries):
+            link = f"{base}/articles/{feed}-{n}"
+            items.append(
+                {"title": title, "link": link, "summary": summary,
+                 "published": now - timedelta(minutes=30 + 7 * n)}
+            )  # fmt: skip
+            web.page(
+                link,
+                f"<html><body><article><h1>{title}</h1><p>{summary}</p>"
+                f"<p>More about {title.lower()}: what changed, and who it's for.</p>"
+                "<p>It's available today for everyone.</p></article></body></html>",
+            )
+        web.feed(f"{base}/feeds/{feed}.xml", items)
+    web.searxng(
+        [
+            {"url": f"{base}/articles/nextjs-0", "title": "Payments guide",
+             "content": "Card and M-Pesa payments for Laravel shops."},
+            {"url": f"{base}/articles/techcabal-0", "title": "M-Pesa sandbox",
+             "content": "Safaricom's sandbox for developers."},
+        ],
+        host="127.0.0.1",
+    )  # fmt: skip
+    sources = {
+        "version": 1,
+        "sources": [
+            {"id": "nextjs", "name": "Next.js", "kind": "feed", "category": "web",
+             "url": f"{base}/feeds/nextjs.xml"},
+            {"id": "techcabal", "name": "TechCabal", "kind": "feed", "category": "africa",
+             "url": f"{base}/feeds/techcabal.xml"},
+        ],
+    }  # fmt: skip
+    path = Path(tempfile.mkdtemp(prefix="jarvis-e2e-")) / "sources.yaml"
+    path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+    os.environ["JARVIS_SOURCES_FILE"] = str(path)
+    os.environ["JARVIS_SEARXNG_URL"] = base
+    os.environ["JARVIS_FETCH_ALLOW_PRIVATE"] = "1"  # this web is on 127.0.0.1 (tests only)
+    config = uvicorn.Config(web.app, host="127.0.0.1", port=port, log_level="warning")
+    threading.Thread(target=uvicorn.Server(config).run, daemon=True).start()
+
+
 def main() -> None:
     url = os.environ["DATABASE_URL"]
     if os.environ.get("JARVIS_ENV") != "test" or not urlparse(url).path.endswith("_e2e"):
@@ -111,6 +182,8 @@ def main() -> None:
         start_fake_speech(int(port))
     if port := os.environ.get("E2E_GOOGLE_PORT"):
         start_fake_google(int(port))
+    if port := os.environ.get("E2E_WEB_PORT"):
+        start_fake_web(int(port))
     from jarvis.cli import main as cli
 
     sys.exit(cli(["serve"]))
