@@ -7,7 +7,7 @@ time-based rules (undo windows, quotas, expiry) are fully testable.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -15,6 +15,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Computed,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -523,3 +524,89 @@ class MailVerdict(Base):
     category: Mapped[str] = mapped_column(String(16))  # yours
     jarvis_category: Mapped[str | None] = mapped_column(String(16))  # what triage had said
     decided_at: Mapped[datetime] = mapped_column(TZ)
+
+
+# --- The daily tech brief (Phase 4) -----------------------------------------------
+
+
+class BriefSource(Base):
+    """A place the brief reads (from sources.yaml): how it's doing, for polite re-reads."""
+
+    __tablename__ = "brief_sources"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    etag: Mapped[str | None] = mapped_column(Text)
+    last_modified: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(TZ)
+    last_ok_at: Mapped[datetime | None] = mapped_column(TZ)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    failures: Mapped[int] = mapped_column(Integer, default=0)  # in a row
+    items_seen: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class BriefItem(Base):
+    """A story, repository or advisory a source published. Public, so stored as is."""
+
+    __tablename__ = "brief_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(Text, unique=True)  # the same story elsewhere, once
+    url: Mapped[str] = mapped_column(Text)
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # story, repo, advisory, exploited
+    title: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text, default="")  # the source's own summary
+    text: Mapped[str | None] = mapped_column(Text)  # the article, kept a few days
+    published_at: Mapped[datetime] = mapped_column(TZ, index=True)
+    fetched_at: Mapped[datetime] = mapped_column(TZ)
+    extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # points, versions, …
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+
+
+class Brief(Base):
+    """One morning's brief. Your personal notes in it are encrypted."""
+
+    __tablename__ = "briefs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    day: Mapped[date] = mapped_column(Date, unique=True)  # in your timezone
+    status: Mapped[str] = mapped_column(String(16), index=True)  # preparing, ready, delivered, …
+    window_start: Mapped[datetime] = mapped_column(TZ)
+    window_end: Mapped[datetime] = mapped_column(TZ)
+    scheduled_for: Mapped[datetime] = mapped_column(TZ)
+    extra_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # "one thing", the audio script
+    audio_file: Mapped[str | None] = mapped_column(Text)
+    audio_seconds: Mapped[int | None] = mapped_column(Integer)
+    models: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # who wrote what
+    deliveries: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # channel -> result
+    delivered_at: Mapped[datetime | None] = mapped_column(TZ)
+    on_time: Mapped[bool | None] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(TZ)
+    updated_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class BriefEntry(Base):
+    """An item as it appeared in a brief: its section, place and why it's there."""
+
+    __tablename__ = "brief_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    brief_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("briefs.id", ondelete="CASCADE"), index=True
+    )
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("brief_items.id", ondelete="SET NULL")
+    )
+    section: Mapped[str] = mapped_column(String(16))  # top, security, africa, quick
+    rank: Mapped[int] = mapped_column(Integer)
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_name: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)  # always the source's own link
+    summary: Mapped[str] = mapped_column(Text, default="")
+    note_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # why it matters to you (JSON)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # versions, points, …
+    why: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # what lifted it
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    vote: Mapped[int | None] = mapped_column(Integer)  # +1 or -1: your 👍/👎
+    voted_at: Mapped[datetime | None] = mapped_column(TZ)

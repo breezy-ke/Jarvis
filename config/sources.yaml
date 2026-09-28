@@ -1,0 +1,67 @@
+# What your daily tech brief reads
+# ---------------------------------------------------------------------------
+# Only RSS/Atom feeds and official APIs: no scraping. Everything read here is
+# public, and is treated as untrusted text (it can never give Jarvis orders).
+# `make restart` applies changes; `make doctor ONLINE=1` checks each source.
+#
+# Each source has an id, a name, a category (web, ai, news, africa, tools,
+# security) and optionally:
+#   weight: 1.0       how much it counts when ranking (your votes adjust it too)
+#   every_hours: 1    how often it's read
+#   enabled: true
+#
+# To add a site, find its feed (often /feed, /rss.xml or /feed.xml) and add:
+#   - { id: mysite, name: My Site, kind: feed, category: web, url: https://… }
+version: 1
+
+sources:
+  # --- Web platform and your stacks ----------------------------------------
+  - { id: webdev, name: web.dev, kind: feed, category: web, url: "https://web.dev/static/blog/feed.xml" }
+  - { id: chrome, name: Chrome for Developers, kind: feed, category: web, url: "https://developer.chrome.com/static/blog/feed.xml" }
+  - { id: react, name: React, kind: feed, category: web, url: "https://react.dev/rss.xml" }
+  - { id: nextjs, name: Next.js, kind: feed, category: web, url: "https://nextjs.org/feed.xml" }
+  - { id: vue, name: Vue, kind: feed, category: web, url: "https://blog.vuejs.org/feed.rss" }
+  - { id: nuxt, name: Nuxt, kind: feed, category: web, url: "https://nuxt.com/blog/rss.xml" }
+  - { id: laravel-news, name: Laravel News, kind: feed, category: web, url: "https://feed.laravel-news.com/" }
+  - { id: wordpress, name: WordPress News, kind: feed, category: web, url: "https://wordpress.org/news/feed/" }
+  - { id: flutter, name: Flutter, kind: feed, category: web, url: "https://medium.com/feed/flutter" }
+  - { id: react-native, name: React Native, kind: feed, category: web, url: "https://reactnative.dev/blog/rss.xml" }
+  - { id: tailwind, name: Tailwind CSS, kind: feed, category: web, url: "https://tailwindcss.com/feeds/feed.xml" }
+  - { id: smashing, name: Smashing Magazine, kind: feed, category: web, url: "https://www.smashingmagazine.com/feed/" }
+
+  # --- AI for builders -------------------------------------------------------
+  - { id: openai, name: OpenAI, kind: feed, category: ai, url: "https://openai.com/news/rss.xml" }
+  - { id: google-ai, name: Google AI, kind: feed, category: ai, url: "https://blog.google/technology/ai/rss/" }
+  - { id: huggingface, name: Hugging Face, kind: feed, category: ai, url: "https://huggingface.co/blog/feed.xml" }
+  - { id: hn, name: Hacker News, kind: hn, category: news, min_points: 150 }
+  - { id: github-rising, name: Rising on GitHub, kind: github_rising, category: tools, every_hours: 6, min_stars: 200, days: 7 }
+
+  # --- Tech news -------------------------------------------------------------
+  - { id: techcrunch, name: TechCrunch, kind: feed, category: news, url: "https://techcrunch.com/feed/" }
+  - { id: verge, name: The Verge, kind: feed, category: news, weight: 0.8, url: "https://www.theverge.com/rss/index.xml" }
+  - { id: ars, name: Ars Technica, kind: feed, category: news, url: "https://feeds.arstechnica.com/arstechnica/index" }
+
+  # --- Kenya and Africa ------------------------------------------------------
+  - { id: techcabal, name: TechCabal, kind: feed, category: africa, url: "https://techcabal.com/feed/" }
+  - { id: techweez, name: Techweez, kind: feed, category: africa, url: "https://techweez.com/feed/" }
+  - { id: techpoint, name: Techpoint Africa, kind: feed, category: africa, url: "https://techpoint.africa/feed/" }
+  - { id: disrupt-africa, name: Disrupt Africa, kind: feed, category: africa, url: "https://disrupt-africa.com/feed/" }
+
+  # --- Security watch --------------------------------------------------------
+  # GitHub-reviewed advisories for the packages your profile's stacks imply
+  # (Next.js → next, Laravel → laravel/framework, …), plus any you list here.
+  - id: advisories
+    name: GitHub security advisories
+    kind: github_advisories
+    category: security
+    every_hours: 3
+    severities: [high, critical]
+    packages: {}
+  # Vulnerabilities attackers are exploiting now, for web hosting products.
+  - id: cisa-kev
+    name: CISA known exploited vulnerabilities
+    kind: cisa_kev
+    category: security
+    every_hours: 6
+    match: [wordpress, php, laravel, drupal, joomla, magento, adobe commerce, apache, nginx,
+            node.js, next.js, react, openssl, cpanel, plesk, litespeed, tomcat, gitlab, jenkins]
