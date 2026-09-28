@@ -107,10 +107,11 @@ services:
     # viewer also joins `egress`. Open it on the PC at http://localhost:6006.
     networks: [internal, egress]
 
-  # Phase 4 (web research). Start it with `make research-up`.
+  # Private web search for Jarvis's research tool. Search engines see the
+  # question, not you: no cookies, no account. No published port: only Jarvis
+  # (on the internal network) can use it.
   searxng:
     image: searxng/searxng:2026.9.23-3cd69d30e
-    profiles: [research]
     restart: unless-stopped
     logging: *logging
     environment:

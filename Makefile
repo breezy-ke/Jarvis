@@ -112,10 +112,6 @@ update: docker-ready ## Get the latest Jarvis and restart it
 	$(COMPOSE) build --pull core
 	$(COMPOSE) up -d --remove-orphans --wait --wait-timeout 300
 
-.PHONY: research-up
-research-up: ## Also start SearXNG, the private web search (Phase 4)
-	$(COMPOSE) --profile research up -d searxng
-
 .PHONY: backup
 backup: ## Save a database backup to data/backups (contains personal data: keep it safe)
 	$(call require_running,postgres)

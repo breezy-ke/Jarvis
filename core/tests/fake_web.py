@@ -171,6 +171,21 @@ class FakeWeb:
         url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
         self.page(url, json.dumps(body), **_JSON)
 
+    def searxng(self, results: Iterable[dict[str, Any]]) -> list[str]:
+        """SearXNG's JSON API at http://searxng:8080. Returns the list of questions asked."""
+        listed = list(results)
+        asked: list[str] = []
+
+        def handle(_request: Request, query: dict[str, list[str]]) -> Response:
+            if (query.get("format") or [""])[0] != "json":
+                return Response("JSON isn't switched on", status_code=403)
+            question = (query.get("q") or [""])[0]
+            asked.append(question)
+            return _json({"query": question, "number_of_results": len(listed), "results": listed})
+
+        self.handlers["searxng/search"] = handle
+        return asked
+
     # --- The fake servers -------------------------------------------------------------------
 
     def _build_app(self) -> FastAPI:

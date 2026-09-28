@@ -15,11 +15,20 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 
 _LINK = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+_MARKDOWN_LINK = re.compile(r"(?i)\[([^\]\n]{1,300})\]\(\s*(?:https?://|www\.)[^)\s]*\s*\)")
 
 
-def no_links(text: str) -> str:
-    """Links in the brief come only from its sources' own records, never from a model."""
-    return re.sub(r"\s{2,}", " ", _LINK.sub("", text)).strip()
+def no_links(text: str, *, keep_lines: bool = False) -> str:
+    """Links come only from Jarvis's own records of its sources, never from a model.
+
+    A Markdown link keeps its words and loses its address. `keep_lines` keeps
+    paragraphs and lists (for answers); otherwise everything is one line.
+    """
+    text = _LINK.sub("", _MARKDOWN_LINK.sub(r"\1", text))
+    if not keep_lines:
+        return re.sub(r"\s{2,}", " ", text).strip()
+    lines = (re.sub(r"[ \t]{2,}", " ", line).rstrip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 class ItemSummary(BaseModel):
