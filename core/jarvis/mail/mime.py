@@ -13,8 +13,10 @@ bytes (Gmail adds the Date and Message-ID itself).
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,6 +27,7 @@ from email.utils import formataddr, getaddresses, parseaddr
 from html.parser import HTMLParser
 from typing import Any
 
+from jarvis.security.crypto import Vault, VaultError
 from jarvis.security.untrusted import injection_signals, sanitize
 
 log = logging.getLogger("jarvis.mail")
@@ -32,6 +35,8 @@ log = logging.getLogger("jarvis.mail")
 MAX_BODY_CHARS = 100_000
 MAX_LINKS = 50
 _ACTION_HEADER = "X-Jarvis-Action"
+BRIEF_HEADER = "X-Jarvis-Brief"
+_BRIEF_MARK = b"jarvis-brief:"
 _RE_PREFIX = re.compile(r"^\s*((re|aw|sv|fw|fwd|tr)\s*(\[\d+\])?\s*:\s*)+", re.IGNORECASE)
 _WS_RE = re.compile(r"[ \t\f\v]+")
 _BLANKS_RE = re.compile(r"\n{3,}")
@@ -69,6 +74,7 @@ class ParsedMessage:
     concealed_signals: tuple[str, ...] = ()
     links: list[str] = field(default_factory=list)  # link targets in the HTML, shown or not
     jarvis_action: str | None = None
+    jarvis_brief: str | None = None  # a claim to be Jarvis's copy of your brief: check it
     size: int = 0
 
     @property
@@ -201,8 +207,30 @@ def parse_gmail_message(resource: dict[str, Any]) -> ParsedMessage:
         concealed_signals=injection_signals(concealed[:20_000]) if concealed.strip() else (),
         links=links,
         jarvis_action=first(_ACTION_HEADER).strip() or None,
+        jarvis_brief=first(BRIEF_HEADER).strip() or None,
         size=int(resource.get("sizeEstimate") or 0),
     )
+
+
+def brief_mark(vault: Vault, brief_id: uuid.UUID) -> str:
+    """The header value on Jarvis's own inbox copy of a brief. Only Jarvis can make one."""
+    return vault.encrypt(_BRIEF_MARK + str(brief_id).encode()).decode("ascii")
+
+
+def is_brief_mark(vault: Vault, value: str | None) -> bool:
+    """True for a genuine copy. Anyone can add the header; only Jarvis's key makes it valid."""
+    if not value:
+        return False
+    candidates = {value.strip()}
+    with contextlib.suppress(ValueError, LookupError, UnicodeError):  # folded as =?utf-8?q?…?=
+        candidates.add(str(make_header(decode_header(value))).strip())
+    for candidate in candidates:
+        try:
+            if vault.decrypt(candidate.encode("ascii")).startswith(_BRIEF_MARK):
+                return True
+        except (VaultError, UnicodeEncodeError, ValueError):
+            continue
+    return False
 
 
 def plain_differs(plain: str, visible: str) -> bool:

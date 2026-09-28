@@ -35,5 +35,7 @@ sections:
 # About how long the spoken version runs.
 audio_minutes: 4
 
-# Past briefs and their audio are kept this long.
+# Stories Jarvis read, and the audio versions, are kept this many days. Past
+# briefs (with your 👍/👎) are kept at least 60 days, so your feedback keeps
+# counting for that long.
 keep_days: 30

@@ -37,6 +37,10 @@ class MailStore:
         self._vault = vault
         self._clock = clock
 
+    @property
+    def vault(self) -> Vault:
+        return self._vault
+
     # --- Encryption ---------------------------------------------------------------
 
     def enc(self, text: str | None) -> bytes | None:
@@ -103,6 +107,8 @@ class MailStore:
                     "hidden_text": parsed.hidden_text,
                     "in_reply_to": parsed.in_reply_to,
                     "jarvis_action": parsed.jarvis_action,
+                    # Jarvis's own brief copies never get here, so this one is pretending.
+                    "fake_jarvis": bool(parsed.jarvis_brief),
                     "plain_differs": bool(parsed.plain_text)
                     and plain_differs(parsed.plain_text, parsed.body),
                     "concealed": list(parsed.concealed_signals),

@@ -205,6 +205,20 @@ class MailService:
         self._labels = {name: by_name[name] for name in JARVIS_LABELS.values()}
         return self._labels
 
+    async def ensure_label(self, name: str) -> str:
+        """The id of a label of Jarvis's own (such as Jarvis/Brief), created if it's missing."""
+        client = self.client()
+        by_name = {str(item["name"]): str(item["id"]) for item in await client.labels()}
+        if name in by_name:
+            return by_name[name]
+        try:
+            return str((await client.create_label(name))["id"])
+        except GmailError as exc:
+            if exc.status != 409:  # 409: created meanwhile
+                raise
+        by_name = {str(item["name"]): str(item["id"]) for item in await client.labels()}
+        return by_name[name]
+
     async def _stood_down(self) -> bool:
         async with self._s.session_factory() as session:
             return (await get_kill_switch(session)).engaged

@@ -28,11 +28,12 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jarvis.brief.render import parse_vote
 from jarvis.chat.service import ChatService
 from jarvis.config import Settings
 from jarvis.db.models import ActionProposal, Conversation, SystemState, TelegramNotice
@@ -68,6 +69,7 @@ HIDDEN_SPOKEN = "something I can't say here"
 
 COMMANDS = [
     ("new", "Start a fresh conversation"),
+    ("brief", "Today's tech brief"),
     ("status", "Approvals, kill switch and autonomy"),
     ("standdown", "Pause everything Jarvis does on its own"),
     ("help", "What I can do here"),
@@ -78,6 +80,7 @@ HELP = (
     "When something needs your approval, I'll send it with Approve and Reject buttons. "
     "High-risk actions still need the app and your passkey.\n\n"
     "/new starts a fresh conversation\n"
+    "/brief sends today's tech brief again\n"
     "/status shows approvals, the kill switch and autonomy\n"
     "/standdown pauses everything I do on my own (or just say “stand down”)"
 )
@@ -222,6 +225,17 @@ async def _until_stopped[T](work: Awaitable[T], stop: asyncio.Event) -> T | None
     return None if task.cancelled() else task.result()
 
 
+Buttons = list[list[dict[str, str]]]
+
+
+class BriefHooks(Protocol):
+    """What the bot needs from the tech brief (set once both are running)."""
+
+    async def telegram_again(self) -> str | None: ...
+
+    async def telegram_vote(self, entry_id: uuid.UUID, vote: int) -> tuple[str, Buttons | None]: ...
+
+
 class TelegramBot:
     def __init__(
         self,
@@ -241,6 +255,7 @@ class TelegramBot:
         self.last_error: str | None = None
         self._offset: int | None = None
         self._notice_lock = asyncio.Lock()
+        self.brief: BriefHooks | None = None
         origin = services.settings.public_origin.rstrip("/")
         # Telegram only opens https links, which the app has once Tailscale Serve is on.
         self._app_link = f"{origin}/approvals" if origin.startswith("https://") else None
@@ -488,6 +503,10 @@ class TelegramBot:
             owner.conversation_id = None
             await self._remember_conversation(owner)
             await self._say(owner, "Fresh start. What's next?")
+        elif command == "brief":
+            problem = await self.brief.telegram_again() if self.brief else "The brief is off."
+            if problem:
+                await self._say(owner, problem)
         elif command == "status":
             await self._say(owner, await self._status_text())
         elif command in ("standdown", "stop"):
@@ -892,7 +911,11 @@ class TelegramBot:
             with contextlib.suppress(TelegramError):
                 await self.api.answer_callback_query(callback_id)
             return  # not the owner: nothing happens
-        parsed = parse_callback(str(callback.get("data") or ""))
+        data = str(callback.get("data") or "")
+        if (vote := parse_vote(data)) is not None:
+            await self._on_vote(callback_id, callback.get("message") or {}, *vote)
+            return
+        parsed = parse_callback(data)
         if parsed is None:
             await self.api.answer_callback_query(callback_id, "That button is out of date.")
             return
@@ -905,6 +928,48 @@ class TelegramBot:
         with contextlib.suppress(TelegramError):
             await self.api.answer_callback_query(callback_id, answer, alert=alert)
         await self._refresh_notice(proposal_id)
+
+    async def _on_vote(
+        self, callback_id: str, message: dict[str, Any], entry_id: uuid.UUID, vote: int
+    ) -> None:
+        if self.brief is None:
+            answer, buttons = "The brief is off.", None
+        else:
+            answer, buttons = await self.brief.telegram_vote(entry_id, vote)
+        with contextlib.suppress(TelegramError):
+            await self.api.answer_callback_query(callback_id, answer)
+        chat_id, message_id = (message.get("chat") or {}).get("id"), message.get("message_id")
+        if buttons is not None and isinstance(chat_id, int) and isinstance(message_id, int):
+            with contextlib.suppress(TelegramError):  # "not modified" and the like don't matter
+                await self.api.edit_message_reply_markup(chat_id, message_id, buttons)
+
+    # --- The tech brief --------------------------------------------------------------------
+
+    async def send_brief(self, messages: list[tuple[str, Buttons]], *, silent: bool) -> list[int]:
+        """The brief's messages, in order; their ids. Nothing (and []) if Telegram isn't linked."""
+        owner = await self.owner()
+        if owner is None:
+            return []
+        ids: list[int] = []
+        for n, (markup, buttons) in enumerate(messages):
+            sent = await self.api.send_message(
+                owner.chat_id,
+                markup,
+                html=True,
+                buttons=buttons or None,
+                silent=silent or n > 0,  # one sound for the whole brief
+            )
+            ids.append(int(sent.get("message_id") or 0))
+        return ids
+
+    async def send_brief_audio(self, audio: bytes, *, caption: str, silent: bool) -> bool:
+        owner = await self.owner()
+        if owner is None:
+            return False
+        await self.api.send_voice(
+            owner.chat_id, audio, filename="brief.mp3", caption=caption, silent=silent
+        )
+        return True
 
     async def _decide(self, action: str, proposal_id: uuid.UUID, shown_hash: str) -> str:
         policy = self._s.policy

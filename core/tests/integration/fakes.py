@@ -75,6 +75,9 @@ class FakeTelegram:
     edits: list[Sent] = field(default_factory=list)
     answers: list[tuple[str, str | None, bool]] = field(default_factory=list)
     voices: list[tuple[int, bytes]] = field(default_factory=list)
+    voice_notes: list[dict[str, Any]] = field(default_factory=list)  # with caption and sound
+    markups: list[tuple[int, int, list[list[dict[str, str]]] | None]] = field(default_factory=list)
+    fail_next: int = 0  # the next N sends fail, as if Telegram were unreachable
     actions: list[tuple[int, str]] = field(default_factory=list)
     commands: list[tuple[str, str]] = field(default_factory=list)
     files: dict[str, bytes] = field(default_factory=dict)
@@ -117,6 +120,9 @@ class FakeTelegram:
         silent: bool = False,
         reply_to: int | None = None,
     ) -> dict[str, Any]:
+        if self.fail_next > 0:
+            self.fail_next -= 1
+            raise TelegramError("Can't reach Telegram (ConnectError).")
         if html and self.refuse_html:
             raise TelegramError("Bad Request: can't parse entities", status=400)
         has_url = any("url" in b for row in buttons or [] for b in row)
@@ -148,11 +154,26 @@ class FakeTelegram:
         self.actions.append((chat_id, action))
 
     async def send_voice(
-        self, chat_id: int, audio: bytes, *, filename: str = "", mime: str = ""
+        self,
+        chat_id: int,
+        audio: bytes,
+        *,
+        filename: str = "",
+        mime: str = "",
+        caption: str | None = None,
+        silent: bool = False,
     ) -> dict[str, Any]:
         self.voices.append((chat_id, audio))
+        self.voice_notes.append(
+            {"chat_id": chat_id, "audio": audio, "caption": caption, "silent": silent}
+        )
         self._message_id += 1
         return {"message_id": self._message_id}
+
+    async def edit_message_reply_markup(
+        self, chat_id: int, message_id: int, buttons: list[list[dict[str, str]]] | None
+    ) -> None:
+        self.markups.append((chat_id, message_id, buttons))
 
     async def get_file(self, file_id: str) -> dict[str, Any]:
         return {"file_id": file_id, "file_path": f"voice/{file_id}.oga"}

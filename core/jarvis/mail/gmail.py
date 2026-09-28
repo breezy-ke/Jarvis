@@ -255,6 +255,21 @@ class GmailClient:
                 "Gmail accepted the email but its answer was unreadable"
             ) from exc
 
+    async def insert_message(self, raw: str, label_ids: list[str]) -> dict[str, Any]:
+        """Place `raw` straight into your mailbox (like IMAP APPEND). Nothing is sent."""
+        return await self._write(
+            "POST",
+            f"{self.base}/messages",
+            "Placing a copy in your inbox",
+            json={"raw": raw, "labelIds": label_ids},
+        )
+
+    async def find_message(self, query: str) -> str | None:
+        """The id of the first message matching a Gmail search, if there is one."""
+        found = await self.list_messages(query=query, max_results=1)
+        messages = found.get("messages") or []
+        return str(messages[0]["id"]) if messages else None
+
     async def insert_event(self, event: dict[str, Any]) -> dict[str, Any]:
         return await self._write(
             "POST",

@@ -28,7 +28,7 @@ from jarvis.db.models import MailContact, MailThread, SystemState
 from jarvis.db.session import SessionFactory, transaction
 from jarvis.mail.config import EmailConfig
 from jarvis.mail.gmail import GmailAuthError, GmailClient, GmailError, HistoryExpired
-from jarvis.mail.mime import parse_gmail_message
+from jarvis.mail.mime import is_brief_mark, parse_gmail_message
 from jarvis.mail.store import CHAT, DRAFT, INBOX, MailStore, Stored
 
 log = logging.getLogger("jarvis.mail")
@@ -266,9 +266,10 @@ class MailSync:
                     labels = set(resource.get("labelIds") or [])
                     if DRAFT in labels or CHAT in labels:
                         continue  # drafts (yours and Jarvis's) aren't mail yet
-                    stored = await self._store.upsert(
-                        session, parse_gmail_message(resource), owner=owner
-                    )
+                    parsed = parse_gmail_message(resource)
+                    if is_brief_mark(self._store.vault, parsed.jarvis_brief):
+                        continue  # Jarvis's own copy of your tech brief: not mail to sort
+                    stored = await self._store.upsert(session, parsed, owner=owner)
                     report.stored.append(stored)
                     touched.add(stored.thread_id)
                 for thread_id in touched:

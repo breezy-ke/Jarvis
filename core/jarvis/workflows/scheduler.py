@@ -6,7 +6,9 @@
 * **Scheduled jobs** use DBOS on the same Postgres. Schedules follow your
   local timezone, and DBOS records each run, so a job interrupted by a power
   cut is resumed when Jarvis comes back. They include the inbox digests (at
-  the times in email.yaml) and, nightly, forgetting old email text.
+  the times in email.yaml) and, nightly, forgetting old email text and the
+  tech brief's old stories and audio. (The brief itself keeps its own time:
+  see brief/service.py.)
 """
 
 from __future__ import annotations
@@ -26,12 +28,14 @@ from jarvis.mail.digest import digest_kind
 from jarvis.services import Services
 
 if TYPE_CHECKING:
+    from jarvis.brief.service import BriefService
     from jarvis.mail.service import MailService
 
 log = logging.getLogger("jarvis.scheduler")
 
 _services: Services | None = None
 _mail: MailService | None = None
+_brief: BriefService | None = None
 
 
 def _svc() -> Services:
@@ -67,7 +71,12 @@ async def run_nightly_maintenance() -> dict[str, int]:
     async with transaction(services.session_factory) as session:
         purged = await services.memory.purge_forgotten(session, older_than=timedelta(days=7))
     bodies = await _mail.purge_old_bodies() if _mail is not None else 0
-    return {"purged_facts": purged, "purged_email_bodies": bodies}
+    brief = await _brief.purge() if _brief is not None else {}
+    return {
+        "purged_facts": purged,
+        "purged_email_bodies": bodies,
+        **{f"purged_brief_{k}": v for k, v in brief.items()},
+    }
 
 
 async def run_mail_digest(kind: str, scheduled_for: datetime) -> bool:
@@ -89,17 +98,25 @@ async def executor_loop(services: Services, stop: asyncio.Event, *, interval: fl
 class Scheduler:
     """Owns the DBOS runtime and the scheduled jobs."""
 
-    def __init__(self, services: Services, *, mail: MailService | None = None) -> None:
+    def __init__(
+        self,
+        services: Services,
+        *,
+        mail: MailService | None = None,
+        brief: BriefService | None = None,
+    ) -> None:
         self._services = services
         self._mail = mail
+        self._brief = brief
         self._started = False
 
     async def start(self) -> None:
-        global _services, _mail
+        global _services, _mail, _brief
         from dbos import DBOS, DBOSConfig, ScheduleInput
 
         _services = self._services
         _mail = self._mail
+        _brief = self._brief
         config: DBOSConfig = {
             "name": "jarvis",
             "system_database_url": self._services.settings.sync_database_url,
