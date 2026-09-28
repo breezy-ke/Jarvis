@@ -137,3 +137,13 @@ tasks:
   public_summarize:
     privacy: public
     candidates: [gemini-flash, groq-fast, openrouter-free]
+  brief:
+    # Your morning brief's personal notes (why a story matters to you, the
+    # spoken version): it sees your profile, so private models only. The
+    # summaries of public articles use public_summarize instead.
+    privacy: personal
+    candidates: [local-chat, groq-large]
+  research:
+    # Answers from web pages. Your questions can name clients, so private too.
+    privacy: personal
+    candidates: [local-chat, groq-large]
