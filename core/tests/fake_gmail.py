@@ -194,6 +194,10 @@ class FakeGmail:
         """As if Jarvis had been offline for weeks: old sync points stop working."""
         self.oldest_history = self.history_id
 
+    def inserted(self) -> list[dict[str, Any]]:
+        """What Jarvis placed in the inbox (messages.insert), oldest first."""
+        return [m for m in self.messages.values() if m.get("inserted")]
+
     def sent(self) -> list[Message]:
         """What was sent through the API, as parsed emails."""
         return [
@@ -311,6 +315,13 @@ class FakeGmail:
                 items = [m for m in items if int(m["internalDate"]) >= cutoff.timestamp() * 1000]
             if "in:sent" in q:
                 items = [m for m in items if "SENT" in m["labelIds"]]
+            if match := re.search(r"rfc822msgid:(\S+)", q):
+                wanted = match.group(1).strip("<>")
+                items = [
+                    m
+                    for m in items
+                    if str(message_from_bytes(m["raw"])["Message-ID"] or "").strip("<> ") == wanted
+                ]
             items = [m for m in items if not {"SPAM", "TRASH", "DRAFT"} & set(m["labelIds"])]
             start = int(pageToken or 0)
             page = items[start : start + maxResults]
@@ -434,6 +445,32 @@ class FakeGmail:
                 return JSONResponse({"error": {"code": 404, "message": "Not Found"}}, 404)
             fake.messages.pop(draft["message_id"], None)
             return Response(status_code=204)
+
+        @app.post(f"{base}/messages")
+        async def insert(request: Request) -> JSONResponse:
+            """messages.insert: straight into the mailbox, exactly as given. Nothing is sent."""
+            if (denied := authorized(request, GMAIL_MODIFY)) is not None:
+                return denied
+            if "insert_down" in fake.faults:
+                fake.faults.discard("insert_down")
+                return JSONResponse({"error": {"code": 503, "message": "Backend Error"}}, 503)
+            body = await request.json()
+            labels = [str(label) for label in body.get("labelIds") or []]
+            unknown = [label for label in labels if label not in fake.labels]
+            if unknown:
+                return JSONResponse(
+                    {"error": {"code": 400, "message": f"Invalid label: {unknown[0]}"}}, 400
+                )
+            stored = fake._store(
+                _unb64(body["raw"]), thread_id=None, labels=labels, when=fake.now()
+            )
+            stored["inserted"] = True
+            if "insert_lost" in fake.faults:  # placed, but the answer never arrives
+                fake.faults.discard("insert_lost")
+                raise httpx.ReadTimeout("the connection dropped")
+            return JSONResponse(
+                {"id": stored["id"], "threadId": stored["threadId"], "labelIds": labels}
+            )
 
         @app.post(f"{base}/messages/send")
         async def send(request: Request) -> JSONResponse:

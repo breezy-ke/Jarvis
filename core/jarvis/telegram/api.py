@@ -212,14 +212,30 @@ class TelegramAPI:
         *,
         filename: str = "jarvis.mp3",
         mime: str = "audio/mpeg",
+        caption: str | None = None,
+        silent: bool = False,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {"chat_id": chat_id}
+        if caption:
+            params["caption"] = caption[:1_000]
+        if silent:
+            params["disable_notification"] = True
         return dict(
             await self.call(
-                "sendVoice",
-                {"chat_id": chat_id},
-                files={"voice": (filename, audio, mime)},
-                http_timeout=60,
+                "sendVoice", params, files={"voice": (filename, audio, mime)}, http_timeout=90
             )
+        )
+
+    async def edit_message_reply_markup(
+        self, chat_id: int, message_id: int, buttons: list[list[dict[str, str]]] | None
+    ) -> None:
+        await self.call(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": {"inline_keyboard": buttons or []},
+            },
         )
 
     async def get_file(self, file_id: str) -> dict[str, Any]:

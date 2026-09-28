@@ -9,6 +9,7 @@ import httpx
 from fastapi import Depends, HTTPException, Request
 
 from jarvis.auth.service import SESSION_COOKIE, AuthService
+from jarvis.brief.service import BriefService
 from jarvis.chat.service import ChatService
 from jarvis.db.models import AuthSession
 from jarvis.ingestion.google import GoogleAuth
@@ -32,6 +33,8 @@ class AppState:
     voice: VoiceRuntime
     telegram: TelegramBot | None = None
     mail: MailService | None = None
+    brief: BriefService | None = None
+    brief_problem: str | None = None  # why the brief is off, if it is
 
 
 def get_state(request: Request) -> AppState:

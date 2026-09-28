@@ -95,7 +95,7 @@ class BriefView:
     script: str
     entries: tuple[EntryView, ...]
     audio_seconds: float | None = None
-    has_audio: bool = False
+    audio_file: str | None = None
     deliveries: Mapping[str, Any] = field(default_factory=dict)
     models: Mapping[str, Any] = field(default_factory=dict)
 
@@ -118,7 +118,7 @@ class BriefView:
             "do_today": self.do_today,
             "sections": {name: [e.to_json() for e in self.section(name)] for name in SECTIONS},
             "audio_seconds": self.audio_seconds,
-            "has_audio": self.has_audio,
+            "audio_url": f"/api/brief/audio/{self.audio_file}" if self.audio_file else None,
             "deliveries": dict(self.deliveries),
             "models": dict(self.models),
         }
@@ -168,7 +168,7 @@ def build_view(
         script=str(extra.get("script") or ""),
         entries=tuple(views),
         audio_seconds=brief.audio_seconds,
-        has_audio=bool(brief.audio_file),
+        audio_file=brief.audio_file,
         deliveries=dict(brief.deliveries or {}),
         models=dict(brief.models or {}),
     )

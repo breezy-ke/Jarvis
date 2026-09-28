@@ -18,11 +18,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
 from jarvis.api import actions, auth, chat, onboarding, profile, system
+from jarvis.api import brief as brief_api
 from jarvis.api import mail as mail_api
 from jarvis.api import telegram as telegram_api
 from jarvis.api import voice as voice_api
 from jarvis.api.deps import AppState
 from jarvis.auth.service import AuthService
+from jarvis.brief.service import build_brief_service
 from jarvis.chat.service import ChatService
 from jarvis.config import Settings, get_settings
 from jarvis.db.migrate import run_migrations
@@ -32,6 +34,7 @@ from jarvis.ingestion.service import IngestionService
 from jarvis.mail.config import load_email_config
 from jarvis.mail.service import MailService
 from jarvis.onboarding.service import OnboardingService
+from jarvis.security.fetch import SafeFetcher
 from jarvis.services import Services, build_services
 from jarvis.telegram.bot import build_telegram_bot
 from jarvis.tracing import configure_tracing
@@ -95,6 +98,7 @@ def create_app(
     services_factory: ServicesFactory | None = None,
     run_background: bool = True,
     http_transport: httpx.AsyncBaseTransport | None = None,  # tests: a fake Google
+    brief_fetcher: SafeFetcher | None = None,  # tests: a fake web
 ) -> FastAPI:
     settings = settings or get_settings()
     logging.basicConfig(
@@ -123,6 +127,12 @@ def create_app(
         chat_service = ChatService(services, mail=mail)
         telegram = build_telegram_bot(settings, services, chat=chat_service, voice=voice)
         mail.notifier.telegram = telegram
+        brief, brief_problem = build_brief_service(
+            settings, services, mail=mail, speech=lambda: voice.speech, fetcher=brief_fetcher
+        )
+        if brief is not None and telegram is not None:
+            brief.telegram = telegram
+            telegram.brief = brief
         app.state.jarvis = AppState(
             services=services,
             auth=auth_service,
@@ -134,6 +144,8 @@ def create_app(
             voice=voice,
             telegram=telegram,
             mail=mail,
+            brief=brief,
+            brief_problem=brief_problem,
         )
 
         async with transaction(session_factory) as session:
@@ -145,11 +157,13 @@ def create_app(
 
         stop = asyncio.Event()
         background: list[asyncio.Task[None]] = []
-        scheduler = Scheduler(services, mail=mail)
+        scheduler = Scheduler(services, mail=mail, brief=brief)
         preparing = asyncio.create_task(voice.prepare())
         if run_background:
             background.append(asyncio.create_task(executor_loop(services, stop)))
             background.append(asyncio.create_task(mail.run(stop)))
+            if brief is not None:
+                background.append(asyncio.create_task(brief.run(stop)))
             if telegram is not None:
                 background.append(asyncio.create_task(telegram.run(stop)))
             if settings.enable_scheduler:
@@ -166,6 +180,8 @@ def create_app(
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             await scheduler.stop()
+            if brief is not None:
+                await brief.aclose()
             if telegram is not None:
                 await telegram.aclose()
             await voice.aclose()
@@ -224,6 +240,7 @@ def create_app(
         voice_api,
         telegram_api,
         mail_api,
+        brief_api,
     ):
         app.include_router(module.router)
 

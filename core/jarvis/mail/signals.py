@@ -9,6 +9,7 @@ thinks, because an email can't argue its way out of them:
 * `dangerous_link`      a javascript:, data:, vbscript: or file: link
 * `hidden_instructions` text you can't see (CSS-hidden, or a plain-text part that
                         differs from what Gmail shows) that talks to an AI
+* `fake_jarvis`         it claims to be Jarvis's own copy of your brief, but isn't
 
 Phrasing that merely *sounds* like it addresses an AI ("act as", "call the
 function") is common in a developer's inbox, so it's a soft signal only.
@@ -28,7 +29,9 @@ from jarvis.policy.validators import link_problems  # the same rules as outgoing
 from jarvis.profile.schema import Contact
 from jarvis.security.untrusted import injection_signals, sanitize
 
-HARD = frozenset({"auth_failed", "spoofed_name", "dangerous_link", "hidden_instructions"})
+HARD = frozenset(
+    {"auth_failed", "spoofed_name", "dangerous_link", "hidden_instructions", "fake_jarvis"}
+)
 NEWSLETTER_LABELS = frozenset({"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"})
 _URL_RE = re.compile(r"""(?i)\b((?:https?|ftp|javascript|data|vbscript|file):[^\s<>"'()]+)""")
 _ADDRESS_IN_NAME = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
@@ -41,6 +44,7 @@ LABELS = {
     "spoofed_name": "Name copies someone you know",
     "dangerous_link": "Dangerous link",
     "hidden_instructions": "Hidden text aimed at AI",
+    "fake_jarvis": "Pretends to come from Jarvis",
     "injection_phrasing": "Text aimed at AI assistants",
     "hidden_text": "Hidden text",
     "risky_link": "Link needs a careful look",
@@ -159,6 +163,8 @@ def message_signals(
         signals.add("injection_phrasing")
     if meta.get("concealed"):
         signals.add("hidden_instructions")
+    if meta.get("fake_jarvis"):
+        signals.add("fake_jarvis")
     if meta.get("hidden_text"):
         signals.add("hidden_text")
     if message.has_attachments:
