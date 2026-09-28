@@ -1,0 +1,39 @@
+# Jarvis daily tech brief
+# ---------------------------------------------------------------------------
+# When your tech brief arrives and where. What it reads is in sources.yaml.
+# `make restart` applies changes; `make doctor` checks this file.
+version: 1
+
+# When the brief arrives, in your timezone (policies.yaml). 07:00 is when your
+# quiet hours end, so it can arrive with a sound.
+time: "07:00"
+
+# How early Jarvis starts putting it together: reading the latest, sorting,
+# summarising and recording the audio version.
+prepare_minutes: 20
+
+# A brief covers everything since the last one, but never more than this, so
+# Monday's covers the weekend.
+max_window_hours: 72
+
+# Where it arrives. `inbox` places a copy straight into your Gmail inbox,
+# labelled Jarvis/Brief (nothing is sent); it needs full Gmail access.
+channels:
+  app: true
+  push: true
+  telegram: true
+  inbox: true
+  audio: true
+
+# How many items each section holds.
+sections:
+  top: 5
+  security: 5
+  africa: 4
+  quick: 5
+
+# About how long the spoken version runs.
+audio_minutes: 4
+
+# Past briefs and their audio are kept this long.
+keep_days: 30

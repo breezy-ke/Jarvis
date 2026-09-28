@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     models_file: Path | None = Field(default=None, alias="JARVIS_MODELS_FILE")
     voice_file: Path | None = Field(default=None, alias="JARVIS_VOICE_FILE")
     email_file: Path | None = Field(default=None, alias="JARVIS_EMAIL_FILE")
+    brief_file: Path | None = Field(default=None, alias="JARVIS_BRIEF_FILE")
+    sources_file: Path | None = Field(default=None, alias="JARVIS_SOURCES_FILE")
     allow_fake_llm: bool = Field(default=False, alias="JARVIS_ALLOW_FAKE_LLM")
     enable_scheduler: bool = Field(default=True, alias="JARVIS_ENABLE_SCHEDULER")
     auto_migrate: bool = Field(default=True, alias="JARVIS_AUTO_MIGRATE")
@@ -60,6 +62,10 @@ class Settings(BaseSettings):
     # Tests only: send every Google request (sign-in, Gmail, Calendar) to a fake
     # server at this address. Refused in production.
     google_fake_base: str | None = Field(default=None, alias="JARVIS_GOOGLE_FAKE_BASE")
+    # Private web search (SearXNG, part of the stack) for the research tool.
+    searxng_url: str = Field(default="http://searxng:8080", alias="JARVIS_SEARXNG_URL")
+    # Tests only: lets the brief read the fake web on 127.0.0.1.
+    fetch_allow_private: bool = Field(default=False, alias="JARVIS_FETCH_ALLOW_PRIVATE")
     github_token: SecretStr | None = Field(default=None, alias="GITHUB_TOKEN")
 
     vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
@@ -86,6 +92,8 @@ class Settings(BaseSettings):
     def _no_fakes_in_production(self) -> Settings:
         if self.google_fake_base and self.env == "production":
             raise ValueError("JARVIS_GOOGLE_FAKE_BASE is for tests only")
+        if self.fetch_allow_private and self.env == "production":
+            raise ValueError("JARVIS_FETCH_ALLOW_PRIVATE is for tests only")
         return self
 
     @property
@@ -95,6 +103,14 @@ class Settings(BaseSettings):
     @property
     def email_config_path(self) -> Path:
         return self.email_file or self.config_dir / "email.yaml"
+
+    @property
+    def brief_config_path(self) -> Path:
+        return self.brief_file or self.config_dir / "brief.yaml"
+
+    @property
+    def sources_config_path(self) -> Path:
+        return self.sources_file or self.config_dir / "sources.yaml"
 
     @property
     def models_config_path(self) -> Path:
