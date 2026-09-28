@@ -7,8 +7,8 @@ How to run, check, update, back up and fix Jarvis. Run the commands in Ubuntu
 
 | Command | What it does |
 |---|---|
-| `make doctor` | Checks everything (host, Windows, Tailscale, keys, database, email, models, voice, Telegram) and prints the fix for each problem |
-| `make doctor ONLINE=1` | Also tests your API keys, Telegram token and Gmail access, and that configured model IDs still exist |
+| `make doctor` | Checks everything (host, Windows, Tailscale, keys, database, email, the tech brief, research, models, voice, Telegram) and prints the fix for each problem |
+| `make doctor ONLINE=1` | Also tests your API keys, Telegram token and Gmail access, that configured model IDs still exist, and that every brief source answers |
 | `make ps` | Shows what's running |
 | `make logs` | Follows the core logs (`make logs SERVICE=ollama` for another service) |
 | `make restart` | Restarts the core; needed after editing `.env` or `config/` |
@@ -176,6 +176,45 @@ models configured now and prints a score for each category: the target is
 90% overall. It changes nothing, and prints counts only, never email text.
 After changing the triage model in `config/models.yaml`, run it again to
 compare.
+
+## Tech brief and research
+
+The **Brief** page shows today's brief, past ones, which channels got it, the
+on-time streak, and each source's health. `make doctor` shows the same.
+
+- **The brief was late, or skipped.** Jarvis prepares it at 06:40 and sends it
+  at 07:00 (`config/brief.yaml`). If the PC was off or asleep then, it goes out
+  as soon as Jarvis is back, that same day. A day that passed without Jarvis
+  running is skipped rather than sent late, and its stories carry over into the
+  next brief. Keep the PC on overnight (setup step 1 sets the power plan).
+- **A channel didn't get it.** The Brief page says which one and why. Jarvis
+  tries again two minutes later, then every half hour that day:
+  - **Telegram:** link it in Settings.
+  - **Inbox copy:** needs the full Gmail access (Sources > **Give Jarvis your
+    inbox**).
+  - **Audio:** needs voice working (see Voice below).
+  - **Notifications:** need notifications allowed on your phone (Settings).
+- **A source keeps failing.** Sites go down for a while, and Jarvis retries
+  every hour. If one keeps failing (`make doctor ONLINE=1` names it), check its
+  address in `config/sources.yaml`, or set `enabled: false` for it, then
+  `make restart`.
+- **Add a source.** In `config/sources.yaml`, add an entry like the others:
+  a unique `id`, a `name`, a `category` (`web`, `ai`, `news`, `africa`,
+  `tools` or `security`), then either `kind: feed` with its RSS or Atom `url`,
+  or one of the API kinds already listed. `weight` (default 1) makes a source
+  count more or less in the ranking. Then run `make restart` and
+  `make doctor ONLINE=1`.
+- **More or fewer items, another time, fewer channels.** Edit
+  `config/brief.yaml` (`sections`, `time`, `channels`), then `make restart`.
+  The doctor warns if the brief time in your profile says something else.
+- **Summaries are just the sites' own words.** No public model was available.
+  Add the Gemini key (setup step 4), or check `make doctor ONLINE=1`. The
+  brief still goes out on time without any model.
+- **Research says it couldn't search.** SearXNG isn't running: `make up`, then
+  `make logs SERVICE=searxng`. The doctor's "SearXNG (research)" check says
+  what's wrong.
+- **You had another daily brief** (a scheduled one somewhere else, say): once
+  `make doctor` shows an on-time streak of 7 days, you can switch it off.
 
 ## Voice
 
@@ -402,5 +441,30 @@ with synthetic data. These checks use your real setup.
    the Inbox catches up.
 8. **Accuracy:** check 50 or more emails with **Is this right?**, then
    `make eval` prints "passed" (90% or more).
+
+### Phase 4 (tech brief and research)
+
+1. `make up`, then `make doctor`:
+   - brief.yaml, sources.yaml and SearXNG are ✔.
+   - Within a minute of starting, "Brief sources" says they're reading fine.
+   - `make doctor ONLINE=1` shows every source answering.
+2. **A first look:** Brief > **Make it now**.
+   - Every title opens its source's own page.
+   - The security watch lists advisories for your stacks, or "Nothing urgent today".
+   - **Listen** plays the audio version.
+3. **The next morning at 07:00**, all at once:
+   - a notification;
+   - on Telegram, the brief with 👍/👎 buttons and a voice note;
+   - in Gmail, a copy labelled `Jarvis/Brief` in your inbox. It isn't sorted
+     or alerted on, and Gmail's Sent folder shows nothing sent;
+   - in the app, the Brief page and the Home card.
+4. **Your votes:** 👍/👎 a few stories, in the app or on Telegram. The next
+   day, stories from the sources you liked rank higher, and **Why this?** says
+   so.
+5. **Research:** in chat, "research the best Kenyan payment gateways for a
+   Laravel shop". The answer has numbered sources, and each link opens the
+   page it cites. In that same conversation, "remember that my bank is X" is
+   refused: web text is in view.
+6. **Seven days on time:** the doctor's "On-time streak" reaches 7.
 
 Later phases add their own checks here as they ship.

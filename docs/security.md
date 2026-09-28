@@ -162,6 +162,26 @@ readable, for searching and sorting. Email text older than 90 days is removed
 every night (`config/email.yaml`); it stays in Gmail, and Jarvis fetches it
 again when you open the email.
 
+## Tech brief and web research
+
+The brief and research read the open web. Pages, feeds and search results are
+written by strangers, so Jarvis handles them like email:
+
+| The risk | What stops it |
+|---|---|
+| **A link that reaches Jarvis itself** (a feed, page or redirect pointing at Postgres, Ollama or the speech server on Jarvis's network, or at your router) | Every web request goes through one safe fetcher (`core/jarvis/security/fetch.py`). It allows http(s) only and looks the site up once. It refuses the request if any address is private, loopback, link-local or reserved (Tailscale's 100.x included). It then connects to the address it checked, verifying the certificate by name. Each redirect (at most 5) is checked the same way. Pages are capped at a few MB and a timeout, and each site is asked one thing at a time. |
+| **A hostile feed** (an XML "billion laughs" bomb, external entities) | Feeds are parsed with `defusedxml`, which refuses entity expansion and external entities. |
+| **Your profile reaching a public model** | Summaries of articles go to a public model (Gemini's free tier may train on them) with public text only. Why a story matters to you is written by a private model: your GPU, or Groq with zero retention. It gets a profile summary without your contacts, boundaries, schedule or personal notes. A test checks every prompt sent to the public model for distinctive profile values. |
+| **A model inventing or swapping a link** | The models' answer formats have no link fields, and any address they write is removed. Every item links to the address its source published, http(s) only, and the app opens it with `noopener noreferrer`. Research citations are kept only when they point at a page Jarvis actually gave the model. |
+| **A made-up version number** | The security watch is built by code from GitHub's advisory data and CISA's catalogue: package, affected versions, fix and severity. No model writes it. |
+| **Instructions hidden in a page** | Web text reaches models only inside nonce-tagged untrusted markers, and the brief's models have no tools. Once research or today's brief is in a chat, memory stays locked and every proposal waits for you, as with email. |
+| **An email posing as your brief** | The inbox copy carries a mark encrypted with `JARVIS_SECRET_KEY`, so the email sync skips only genuine copies. An email that claims to be one is flagged "Pretends to come from Jarvis" and sorted as suspicious. |
+| **Sites asking not to be read** | Article pages and research pages are read only where robots.txt allows. Otherwise the feed's own summary, or the search snippet, stands in. Feeds and official APIs are published to be read. |
+
+Nothing is sent by email: the inbox copy is placed with Gmail's
+`messages.insert`, which Gmail treats like a message arriving, and it never
+leaves your mailbox.
+
 ## Which AI provider sees what
 
 Every AI call names a task, and every task has a data class. The router
@@ -178,10 +198,11 @@ somewhere it shouldn't.
 | Anthropic / OpenAI (paid; off until you set a budget) | No (API terms) | Not by default | Public, personal |
 
 - **Tasks:**
-  - Chat, voice, onboarding, memory extraction, ingestion, triage and drafting
+  - Chat, voice, onboarding, memory extraction, ingestion, triage, drafting,
+    the brief's personal notes (`brief`) and research answers (`research`)
     are **personal**.
   - Client work under NDA is **confidential**.
-  - News and research are **public**.
+  - Summaries of public news articles (`public_summarize`) are **public**.
 - **Changing providers:** edit these flags in `config/models.yaml`.
 - **Tests:**
   - every shipped task is checked against these rules
@@ -310,14 +331,24 @@ container on your PC. Its own usage analytics are turned off.
 - **AI calls:** only to the providers in the table above, only with the data
   classes allowed, and only when you've added their keys.
 - **Google API calls:** once you connect Google: Gmail every minute (reading,
-  and the labels, drafts and sends described above), your calendar, and the
-  calendar holds you tap.
+  and the labels, drafts and sends described above), your calendar, the
+  calendar holds you tap, and each morning the brief's copy placed in your
+  inbox.
 - **Email to AI providers:** sorting runs on your GPU, with Groq as the
   fallback. Drafting a reply sends the conversation to Groq first, under zero
   retention, because its larger model writes better; your GPU is the
   fallback. To keep email on the PC, put `local-chat` first under `drafting`
   in `config/models.yaml`.
 - **Web and GitHub reads:** when you run the website or GitHub sources.
+- **The brief's sources:** every hour, the sites in `config/sources.yaml`, and
+  the public APIs of Hacker News, GitHub and CISA. The top stories' own pages
+  are read too, where robots.txt allows. Jarvis names itself in its user agent;
+  with `GITHUB_TOKEN` set, GitHub knows the requests are yours.
+- **Article text to Gemini:** summaries of public articles (public data only).
+- **Research questions:** to the search engines SearXNG asks (such as Google,
+  Bing and DuckDuckGo), with no cookies and no account, so they see the
+  question but not who asked. Leave client names out of questions when you can.
+  Research then reads the top pages, as above.
 - **Web push:** notifications travel through your browser maker's push
   service, encrypted end to end (Web Push encryption), so that service can't
   read them.
@@ -335,6 +366,10 @@ container on your PC. Its own usage analytics are turned off.
 - **Nothing else.** Jarvis has no telemetry, analytics or crash reporting.
 
 ## Residual risks, and what you can do
+
+- **News can be wrong.** Summaries are neutral, but they inherit a site's
+  mistakes, and a model can still misread an article. Open the source before
+  acting on anything important; every item links to it.
 
 - **An email can still fool you.** Jarvis flags what code can check, but a
   well-written scam from a real address reads convincingly, and so may

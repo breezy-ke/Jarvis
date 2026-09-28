@@ -125,6 +125,16 @@ def spoken_parts(text: str, limit: int = SPOKEN_CHARS) -> list[str]:
     return parts
 
 
+def on_time_streak(on_time: dict[date, bool | None], today: date) -> int:
+    """Days in a row on time, ending today (or yesterday, while today's is still to come)."""
+    day = today if on_time.get(today) is not None else today - timedelta(days=1)
+    count = 0
+    while on_time.get(day) is True:
+        count += 1
+        day -= timedelta(days=1)
+    return count
+
+
 def encode_mp3(pcm: bytes, rate: int = TTS_SAMPLE_RATE) -> bytes:
     """16-bit mono PCM as MP3 (libsndfile, bundled with soundfile: no extra tools)."""
     import numpy as np
@@ -628,13 +638,7 @@ class BriefService:
                     .order_by(Brief.day.desc())
                 )
             ).all()
-        on_time: dict[date, bool | None] = {row.day: row.on_time for row in rows}
-        day = today if on_time.get(today) is not None else today - timedelta(days=1)
-        count = 0
-        while on_time.get(day) is True:
-            count += 1
-            day -= timedelta(days=1)
-        return count
+        return on_time_streak({row.day: row.on_time for row in rows}, today)
 
     # --- Forgetting ------------------------------------------------------------------------------
 

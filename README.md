@@ -18,7 +18,8 @@ cloud tiers), and it's reachable from your phone over private HTTPS.
 | **Voice:** talk to Jarvis in the app and interrupt it; "Hey Jarvis" on your PC; spoken replies; approve everyday actions by saying "confirm". Speech runs on your PC | ✅ Phase 2 |
 | **Telegram:** chat by text or voice note, and approve everyday actions with a tap | ✅ Phase 2 |
 | **Email:** your Gmail sorted every minute with summaries, tasks and dates; replies drafted in your style; sending only with your approval and a 60-second undo; morning and evening digests; urgent alerts from people you know. Checked against 61 prompt-injection attacks in CI | ✅ Phase 3 |
-| **Daily tech brief and research**, with sources and "why it matters to you" | Phase 4 |
+| **Tech brief:** every morning at 07:00, from 26 feeds and official APIs, ranked for your stacks and clients with "why it matters to you", a security watch for your packages, and a spoken version. It arrives in the app, as a push, on Telegram and as a copy in your inbox; your 👍/👎 change tomorrow's order, and every item links to its source | ✅ Phase 4 |
+| **Research:** ask anything by chat, voice or Telegram; a private search on your PC, the top pages read safely, and an answer with numbered sources | ✅ Phase 4 |
 | **Lead engine:** East African SMEs, international startups, tenders, agencies needing overflow | Phase 5 |
 | **UI Studio:** websites and apps (Next.js, Nuxt, WordPress, Laravel, Flutter, React Native) with automated design, accessibility and performance gates | Phase 6 |
 | **Calendar, tasks, proposals and invoices, a dev copilot, content** | Phase 7 |
@@ -34,6 +35,8 @@ cloud tiers), and it's reachable from your phone over private HTTPS.
    you sign off your profile.
 4. **Talk:** open the Talk page, or set up "Hey Jarvis" on the PC and Telegram
    (setup steps 6 and 7).
+5. **Read:** open Brief and tap **Make it now**; from then on it arrives every
+   morning at 07:00 (setup step 9).
 
 Day to day, run these in Ubuntu from `~/Jarvis`:
 
@@ -54,8 +57,8 @@ updates, backups, the kill switch, lost devices and troubleshooting.
 - **web:** a React PWA (Vite, Tailwind CSS, Radix, TanStack).
 - **satellite:** the "Hey Jarvis" Windows tray app (Python, openWakeWord).
 - **Deployment:** Docker Compose, with Ollama for local models, a local speech
-  server (speaches: faster-whisper and Kokoro), and Phoenix for local AI
-  traces.
+  server (speaches: faster-whisper and Kokoro), SearXNG for private web search,
+  and Phoenix for local AI traces.
 
 | Doc | For |
 |---|---|

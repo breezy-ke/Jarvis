@@ -15,3 +15,4 @@ isn't deleted: it's marked superseded, with a link to the one that replaced it.
 | [0007](0007-voice-in-the-core-over-a-websocket.md) | Voice runs in the core, over one WebSocket, with a local speech server |
 | [0008](0008-telegram-by-long-polling.md) | Telegram through the raw Bot API, by long polling |
 | [0009](0009-gmail-by-rest-polling-and-recipients-by-code.md) | Gmail by REST and polling; mail agents without tools; recipients by code |
+| [0010](0010-brief-from-feeds-public-summaries-private-notes.md) | A brief from feeds and official APIs; public summaries, private notes; an inbox copy, not an email |

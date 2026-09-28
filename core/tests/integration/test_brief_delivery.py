@@ -14,6 +14,7 @@ import pytest
 import soundfile
 from sqlalchemy import select
 
+from jarvis import doctor
 from jarvis.brief.config import BriefConfig, parse_sources_config
 from jarvis.brief.render import parse_vote
 from jarvis.brief.service import BriefService, spoken_parts
@@ -27,6 +28,7 @@ from jarvis.security.crypto import Vault
 from jarvis.services import Services
 from jarvis.telegram.bot import TelegramBot
 from jarvis.voice.speech import TTS_SAMPLE_RATE
+from tests.conftest import make_settings
 from tests.integration.brief_helpers import MONDAY, Newsroom, Push, Speaker, at
 from tests.integration.fakes import AMANI, FakeTelegram, Updates
 from tests.integration.mail_helpers import OWNER, MailRig
@@ -381,6 +383,16 @@ async def test_seven_mornings_in_a_row_on_time(morning: Morning) -> None:
     assert len(morning.push.sent) == 7
     history = await morning.brief.history()
     assert [h["on_time"] for h in history] == [True] * 7
+
+    # `make doctor` sees the same week.
+    settings = make_settings(JARVIS_SEARXNG_URL="http://127.0.0.1:9")  # no search here
+    checks = {
+        c.title: c for c in await doctor.check_brief(settings, online=False, clock=morning.clock)
+    }
+    assert checks["On-time streak"].detail == "7 days; the 7-day goal is met"
+    assert checks["Last brief"].status == doctor.OK
+    assert checks["Brief sources"].detail == "reading fine"
+    assert checks["SearXNG (research)"].status == doctor.WARN
 
 
 async def test_telegram_brief_command_and_votes(morning: Morning) -> None:

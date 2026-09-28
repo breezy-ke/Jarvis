@@ -88,6 +88,14 @@ class SearXNG:
                 break
         return results
 
+    async def healthy(self) -> str | None:
+        """None if SearXNG is up (without asking any search engine); otherwise what's wrong."""
+        try:
+            response = await self._http.get(f"{self.base_url}/healthz")
+        except httpx.HTTPError as exc:
+            return f"the search engine on your PC didn't answer ({type(exc).__name__})"
+        return None if response.status_code == 200 else f"it answered {response.status_code}"
+
     async def reachable(self) -> str | None:
         """None if SearXNG answers searches in JSON; otherwise what's wrong."""
         try:
