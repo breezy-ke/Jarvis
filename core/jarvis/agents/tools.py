@@ -10,7 +10,9 @@ from jarvis.db.session import transaction
 from jarvis.services import Services
 
 if TYPE_CHECKING:
+    from jarvis.brief.service import BriefService
     from jarvis.mail.service import MailService
+    from jarvis.research.researcher import Researcher
 
 
 @dataclass
@@ -20,7 +22,9 @@ class AgentDeps:
     conversation_id: uuid.UUID | None = None
     redact_sensitive: bool = False  # on channels that aren't end-to-end encrypted
     mail: MailService | None = None  # None when email isn't set up
-    # Someone else's words (an email, a forwarded message) are in the model's context.
+    brief: BriefService | None = None  # None when the tech brief is off
+    research: Researcher | None = None  # None when web research isn't set up
+    # Someone else's words (an email, a web page, a forwarded message) are in the context.
     # Then memory stays as it is and every proposal waits for the owner.
     read_untrusted: bool = False
 

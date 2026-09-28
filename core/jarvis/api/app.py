@@ -34,6 +34,7 @@ from jarvis.ingestion.service import IngestionService
 from jarvis.mail.config import load_email_config
 from jarvis.mail.service import MailService
 from jarvis.onboarding.service import OnboardingService
+from jarvis.research.researcher import Researcher, build_researcher
 from jarvis.security.fetch import SafeFetcher
 from jarvis.services import Services, build_services
 from jarvis.telegram.bot import build_telegram_bot
@@ -99,6 +100,7 @@ def create_app(
     run_background: bool = True,
     http_transport: httpx.AsyncBaseTransport | None = None,  # tests: a fake Google
     brief_fetcher: SafeFetcher | None = None,  # tests: a fake web
+    researcher: Researcher | None = None,  # tests: a fake web and search
 ) -> FastAPI:
     settings = settings or get_settings()
     logging.basicConfig(
@@ -124,12 +126,13 @@ def create_app(
         auth_service = AuthService(settings=settings, audit=services.audit, clock=services.clock)
         voice = build_voice_runtime(settings, services)
         mail = MailService(services, google=google, http=http, config=email_config)
-        chat_service = ChatService(services, mail=mail)
-        telegram = build_telegram_bot(settings, services, chat=chat_service, voice=voice)
-        mail.notifier.telegram = telegram
         brief, brief_problem = build_brief_service(
             settings, services, mail=mail, speech=lambda: voice.speech, fetcher=brief_fetcher
         )
+        research = researcher or build_researcher(settings, services)
+        chat_service = ChatService(services, mail=mail, brief=brief, research=research)
+        telegram = build_telegram_bot(settings, services, chat=chat_service, voice=voice)
+        mail.notifier.telegram = telegram
         if brief is not None and telegram is not None:
             brief.telegram = telegram
             telegram.brief = brief
@@ -182,6 +185,7 @@ def create_app(
             await scheduler.stop()
             if brief is not None:
                 await brief.aclose()
+            await research.aclose()
             if telegram is not None:
                 await telegram.aclose()
             await voice.aclose()

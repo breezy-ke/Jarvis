@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from jarvis.agents.orchestrator import build_orchestrator
 from jarvis.agents.tools import AgentDeps
+from jarvis.brief.service import BriefService
 from jarvis.db.models import ActionProposal, ChatMessage, Conversation, ConversationTurn
 from jarvis.db.session import transaction
 from jarvis.llm.router import RouterError, StreamDone, TextDelta
@@ -21,6 +22,7 @@ from jarvis.memory.retrieval import render_facts, search_facts
 from jarvis.policy.state import get_kill_switch
 from jarvis.policy.types import Status
 from jarvis.profile.service import core_summary
+from jarvis.research.researcher import Researcher
 from jarvis.security.untrusted import contains_untrusted
 from jarvis.services import Services
 
@@ -62,7 +64,7 @@ The owner is talking to you and hears your reply spoken aloud. So:
 
 
 def carries_untrusted(history: list[ModelMessage], text: str) -> bool:
-    """Whether someone else's words (an email, a forwarded message) are in the context."""
+    """Whether someone else's words (an email, a web page, a forwarded message) are in context."""
     if contains_untrusted(text):
         return True
     for message in history:
@@ -91,10 +93,14 @@ class ChatService:
         *,
         agent: Agent[AgentDeps, str] | None = None,
         mail: MailService | None = None,
+        brief: BriefService | None = None,
+        research: Researcher | None = None,
     ) -> None:
         self._s = services
         self.agent = agent or build_orchestrator(services.persona)
         self.mail = mail
+        self.brief = brief
+        self.research = research
 
     async def create_conversation(
         self, *, channel: str = "pwa", title: str | None = None
@@ -220,6 +226,8 @@ class ChatService:
             conversation_id=conversation_id,
             redact_sensitive=redact,
             mail=self.mail,
+            brief=self.brief,
+            research=self.research,
             read_untrusted=carries_untrusted(history, text),
         )
         chunks: list[str] = []
