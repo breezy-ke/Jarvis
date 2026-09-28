@@ -113,6 +113,8 @@ FAKE_TASKS = (
     "drafting",
     "confidential",
     "public_summarize",
+    "brief",
+    "research",
 )
 
 
