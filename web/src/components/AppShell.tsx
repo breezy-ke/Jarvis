@@ -8,6 +8,7 @@ import {
   Inbox,
   MessageSquare,
   Mic,
+  Newspaper,
   Settings,
   ShieldAlert,
   Sparkles,
@@ -53,6 +54,7 @@ export function AppShell() {
       badge: mail?.access === "none" ? undefined : mail?.counts.attention,
       mobile: true,
     },
+    { to: "/brief", label: "Brief", icon: <Newspaper /> },
     { to: "/chat", label: "Chat", icon: <MessageSquare />, mobile: true },
     { to: "/talk", label: "Talk", icon: <Mic />, mobile: true },
     {

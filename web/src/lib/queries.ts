@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
-import type { AuthStatus, MailStatus, SystemStatus } from "./types";
+import type { AuthStatus, BriefStatus, MailStatus, SystemStatus } from "./types";
 
 export const keys = {
   auth: ["auth"] as const,
@@ -26,6 +26,10 @@ export const keys = {
   mailStatus: ["mail", "status"] as const,
   threads: (tab: string) => ["mail", "threads", tab] as const,
   thread: (id: string) => ["mail", "thread", id] as const,
+  brief: ["brief"] as const,
+  briefStatus: ["brief", "status"] as const,
+  briefDay: (day: string) => ["brief", "day", day] as const,
+  briefHistory: ["brief", "history"] as const,
 };
 
 export function useAuthStatus() {
@@ -45,5 +49,13 @@ export function useSystemStatus() {
     queryKey: keys.status,
     queryFn: () => api.get<SystemStatus>("/api/status"),
     refetchInterval: 15_000,
+  });
+}
+
+export function useBriefStatus() {
+  return useQuery({
+    queryKey: keys.briefStatus,
+    queryFn: () => api.get<BriefStatus>("/api/brief/status"),
+    refetchInterval: (query) => (query.state.data?.making ? 3_000 : 60_000),
   });
 }

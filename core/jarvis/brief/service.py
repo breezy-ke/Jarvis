@@ -6,7 +6,7 @@ when the next step is due, and compares the clock with the database:
 * **Reading:** every source, hourly, so a site that's down at 07:00 is already
   covered.
 * **Preparing:** from `time - prepare_minutes` (06:40): the latest news, ranked,
-  summarised and noted for you.
+  summarised, noted for you and recorded as audio.
 * **Delivering:** at `time` (07:00), to each channel once: the app, a push,
   Telegram (with 👍/👎 and a voice note) and a copy placed in your inbox.
 * **Catching up:** if Jarvis was off at 07:00, the brief goes out when it's
@@ -246,7 +246,7 @@ class BriefService:
         brief = await self.brief_for(day)
         if brief is None and now >= self.prepare_time(day):
             await self.read()  # the latest, for a brief made now
-            brief = await self.builder.prepare(day)
+            brief = await self.prepare(day)
         if brief is None:
             return None
         if brief.status == "ready" and now >= self.delivery_time(day):
@@ -257,11 +257,21 @@ class BriefService:
             return await self.deliver(day)
         return brief
 
+    async def prepare(self, day: date) -> Brief:
+        """Put the brief together and record its spoken version, ready for 07:00."""
+        brief = await self.builder.prepare(day)
+        if brief.status == "ready" and self.config.channels.audio and not brief.audio_file:
+            try:
+                await self.voice(brief)
+            except Exception as exc:  # delivery tries again; the brief itself is ready
+                log.warning("brief: couldn't record the audio version yet: %s", _short(exc))
+        return await self.brief_for(day) or brief
+
     async def make_now(self) -> Brief:
         """ "Make today's brief now": ready straight away, and delivered if 07:00 has passed."""
         day = self.today()
         await self.read()
-        brief = await self.builder.prepare(day)
+        brief = await self.prepare(day)
         if brief.status == "ready" and self._s.clock.now() >= self.delivery_time(day):
             brief = await self.deliver(day) or brief
         return brief
@@ -354,9 +364,16 @@ class BriefService:
     async def _to_audio(
         self, brief: Brief, view: BriefView, quiet: bool, done: dict[str, Any]
     ) -> dict[str, Any]:
+        return await self.voice(brief, view)
+
+    async def voice(self, brief: Brief, view: BriefView | None = None) -> dict[str, Any]:
+        """The spoken version, as an MP3 kept with the brief. Made once, while preparing."""
+        if brief.audio_file and (self.audio_dir / brief.audio_file).is_file():
+            return {"status": SENT, "seconds": brief.audio_seconds}
         speaker = self._speech()
         if speaker is None:
             return {"status": SKIPPED, "detail": "Voice is off, so there's no audio version."}
+        view = view or await self.view_of(brief)
         if not view.script.strip():
             return {"status": SKIPPED, "detail": "Nothing to read aloud."}
         pcm = bytearray()
@@ -364,7 +381,7 @@ class BriefService:
         for n, part in enumerate(spoken_parts(view.script)):
             spoken = await speaker.synthesize(part, response_format="pcm")
             pcm += (pause if n else b"") + spoken
-        if len(pcm) < TTS_SAMPLE_RATE:  # under half a second: something went wrong
+        if len(pcm) < TTS_SAMPLE_RATE // 5:  # under a tenth of a second: nothing came back
             raise RuntimeError("the speech server sent back no audio")
         data = await asyncio.to_thread(encode_mp3, bytes(pcm))
         name = f"{brief.day.isoformat()}.mp3"

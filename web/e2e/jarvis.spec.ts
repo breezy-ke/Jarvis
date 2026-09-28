@@ -228,6 +228,66 @@ test.describe.serial("Jarvis end to end", () => {
     await expect(page.getByText(/^Sent\./)).toBeVisible({ timeout: 15_000 });
   });
 
+  test("the tech brief: stories with their sources, your votes and the audio version", async () => {
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .first()
+      .getByRole("link", { name: "Brief" })
+      .click();
+    await expect(page.getByRole("heading", { name: /Tech brief/ })).toBeVisible();
+    // Jarvis may already have made today's (it's past 07:00); otherwise ask for it now.
+    const make = page.getByRole("button", { name: "Make it now" });
+    if (await make.isVisible()) await make.click();
+    await expect(page.getByRole("heading", { name: "Top stories" })).toBeVisible({
+      timeout: 45_000,
+    });
+    const stories = page.getByRole("article");
+    await expect(stories).toHaveCount(6);
+    const first = stories.first();
+    const link = first.getByRole("link").first();
+    await expect(link).toHaveAttribute("href", /^http:\/\/127\.0\.0\.1:\d+\/articles\//);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await first.getByText("Why this?").click();
+    await expect(first.getByRole("listitem").first()).toBeVisible();
+
+    const more = first.getByRole("button", { name: "More like this" });
+    await more.click();
+    await expect(more).toHaveAttribute("aria-pressed", "true");
+    await page.reload();
+    await expect(
+      page.getByRole("article").first().getByRole("button", { name: "More like this" }),
+    ).toHaveAttribute("aria-pressed", "true"); // saved, not just shown
+
+    const audio = page.locator("audio");
+    await expect(audio).toHaveAttribute("src", /^\/api\/brief\/audio\/\d{4}-\d{2}-\d{2}\.mp3$/);
+    const recording = await page.request.get((await audio.getAttribute("src")) ?? "");
+    expect(recording.status()).toBe(200);
+    expect(recording.headers()["content-type"]).toBe("audio/mpeg");
+    await expectAccessible(page, "brief");
+
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .first()
+      .getByRole("link", { name: "Home" })
+      .click();
+    await expect(page.getByText("Today's tech brief")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /Next.js 16.1 makes builds twice as fast/ }),
+    ).toBeVisible();
+  });
+
+  test("research in chat reads the web through the private search", async () => {
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .first()
+      .getByRole("link", { name: "Chat" })
+      .click();
+    await send(page, '/tool research {"question": "Kenyan payment gateways for Laravel"}');
+    await expect(page.getByText(/research: Research result, from web pages/)).toBeVisible({
+      timeout: 30_000,
+    });
+  });
+
   test("phone layout works and stays accessible", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");

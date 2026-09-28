@@ -171,8 +171,8 @@ class FakeWeb:
         url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
         self.page(url, json.dumps(body), **_JSON)
 
-    def searxng(self, results: Iterable[dict[str, Any]]) -> list[str]:
-        """SearXNG's JSON API at http://searxng:8080. Returns the list of questions asked."""
+    def searxng(self, results: Iterable[dict[str, Any]], *, host: str = "searxng") -> list[str]:
+        """SearXNG's JSON API (at http://searxng:8080). Returns the list of questions asked."""
         listed = list(results)
         asked: list[str] = []
 
@@ -183,7 +183,7 @@ class FakeWeb:
             asked.append(question)
             return _json({"query": question, "number_of_results": len(listed), "results": listed})
 
-        self.handlers["searxng/search"] = handle
+        self.handlers[f"{host}/search"] = handle
         return asked
 
     # --- The fake servers -------------------------------------------------------------------

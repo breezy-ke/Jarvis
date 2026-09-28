@@ -362,3 +362,89 @@ export interface TelegramLink extends PairingCode {
   link: string | null;
   bot_username: string;
 }
+
+// --- Tech brief -------------------------------------------------------------------------------
+
+export type BriefSectionId = "top" | "security" | "africa" | "quick";
+
+export interface BriefEntry {
+  id: string;
+  section: BriefSectionId;
+  rank: number;
+  title: string;
+  /** The source's own address: never a model's. */
+  url: string;
+  source: string;
+  summary: string;
+  /** Why it matters to you (Jarvis's private notes). */
+  why: string;
+  client: string;
+  /** "Why this?": what lifted it in the ranking, in plain words. */
+  reasons: string[];
+  /** Security watch: package, versions and fix, from the advisory data. */
+  watch: string[];
+  details: Record<string, unknown>;
+  vote: 1 | -1 | null;
+}
+
+export type BriefStatusId = "ready" | "delivered" | "skipped";
+
+export interface BriefDelivery {
+  status: "sent" | "failed" | "skipped";
+  at: string;
+  detail?: string;
+  error?: string;
+}
+
+export interface Brief {
+  id: string;
+  day: string;
+  status: BriefStatusId;
+  scheduled_for: string | null;
+  delivered_at: string | null;
+  on_time: boolean | null;
+  do_today: string;
+  sections: Record<BriefSectionId, BriefEntry[]>;
+  audio_seconds: number | null;
+  audio_url: string | null;
+  deliveries: Record<string, BriefDelivery>;
+  models: Record<string, string | null>;
+}
+
+export interface BriefSourceHealth {
+  id: string;
+  name: string;
+  category: string;
+  enabled: boolean;
+  last_ok_at: string | null;
+  last_checked_at: string | null;
+  failures: number;
+  last_error: string | null;
+}
+
+export interface BriefStatus {
+  enabled: boolean;
+  problem: string | null;
+  time?: string;
+  timezone?: string;
+  today?: {
+    day: string;
+    status: BriefStatusId | null;
+    on_time: boolean | null;
+    deliveries: Record<string, BriefDelivery>;
+  };
+  next_delivery?: string;
+  making?: boolean;
+  streak?: number;
+  last_error?: string | null;
+  channels?: Record<string, boolean>;
+  sources?: BriefSourceHealth[];
+}
+
+export interface BriefHistoryItem {
+  day: string;
+  status: BriefStatusId;
+  on_time: boolean | null;
+  delivered_at: string | null;
+  headline: string | null;
+}

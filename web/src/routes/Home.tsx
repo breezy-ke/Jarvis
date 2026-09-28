@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowRight,
@@ -6,22 +7,26 @@ import {
   Inbox,
   Lock,
   MessageSquare,
+  Newspaper,
   ShieldCheck,
   Sparkles,
   Unlock,
 } from "lucide-react";
 
+import { StoryLink } from "@/components/BriefStory";
 import { KillSwitchButton } from "@/components/KillSwitch";
 import { Orb } from "@/components/Orb";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress, Skeleton } from "@/components/ui/misc";
-import { useMailStatus, useSystemStatus } from "@/lib/queries";
+import { api } from "@/lib/api";
+import { clockTime } from "@/lib/brief";
+import { keys, useBriefStatus, useMailStatus, useSystemStatus } from "@/lib/queries";
+import type { Brief } from "@/lib/types";
 import { greeting, percent, timeAgo } from "@/lib/utils";
 
 const ROADMAP = [
-  { phase: "Phase 4", title: "Daily tech brief and web research" },
   { phase: "Phase 5", title: "Lead engine: find and win clients" },
   { phase: "Phase 6", title: "UI Studio: build websites and apps" },
   { phase: "Phase 7", title: "Calendar, reminders, proposals and invoices" },
@@ -62,6 +67,55 @@ function InboxCard() {
               {data.digest.text}
             </p>
           </details>
+        </CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
+function BriefCard() {
+  const status = useBriefStatus();
+  const today = status.data?.today;
+  const brief = useQuery({
+    queryKey: keys.briefDay(today?.day ?? "today"),
+    queryFn: () => api.get<Brief>(`/api/brief?day=${today?.day ?? ""}`),
+    enabled: status.data?.enabled === true && today?.status != null,
+  });
+  if (!status.data?.enabled) return null;
+  const top = brief.data?.sections.top.slice(0, 3) ?? [];
+  const next = status.data.next_delivery
+    ? clockTime(status.data.next_delivery, status.data.timezone)
+    : status.data.time;
+  return (
+    <Card>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Newspaper className="size-4" /> Today's tech brief
+          </CardTitle>
+          <CardDescription>
+            {top.length
+              ? `The top ${top.length} of today's brief`
+              : `Your next brief arrives at ${next}`}
+            {status.data.streak ? ` · on time ${status.data.streak} days running` : ""}
+          </CardDescription>
+        </div>
+        <Button asChild variant="outline">
+          <Link to="/brief">
+            Open brief <ArrowRight />
+          </Link>
+        </Button>
+      </CardHeader>
+      {top.length ? (
+        <CardContent>
+          <ol className="space-y-2">
+            {top.map((entry) => (
+              <li key={entry.id} className="text-sm">
+                <StoryLink entry={entry} />
+                <span className="text-muted-foreground"> · {entry.source}</span>
+              </li>
+            ))}
+          </ol>
         </CardContent>
       ) : null}
     </Card>
@@ -167,6 +221,8 @@ export function HomePage() {
           </CardContent>
         </Card>
       </div>
+
+      <BriefCard />
 
       <InboxCard />
 
